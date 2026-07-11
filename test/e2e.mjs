@@ -181,7 +181,7 @@ async function main() {
   // -- v0.2.0 commands: js-targeted click + wait_for + version
   console.log("\n== v0.2.0 commands ==");
   const ver = await cmd("version");
-  check("version command", ver.ok && ver.result.version === "0.2.0", JSON.stringify(ver));
+  check("version command", ver.ok && ver.result.version === "0.3.0", JSON.stringify(ver));
 
   const jsClick = await cmd("click", { tab_id: tabId, js: "[...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'bump')" });
   check("click by js expression echoes element", jsClick.ok && jsClick.result.element?.tag === "button" && jsClick.result.element?.text === "bump", JSON.stringify(jsClick));

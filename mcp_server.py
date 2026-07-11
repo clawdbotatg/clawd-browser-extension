@@ -19,7 +19,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("CLAWD_BROWSER_PORT", "8765"))
 BRIDGE_URL = f"http://127.0.0.1:{PORT}"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 
 def log(msg):
