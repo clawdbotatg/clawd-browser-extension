@@ -4,7 +4,7 @@
 // the tab, JS eval, console capture.
 
 const DEFAULT_PORT = 8765;
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 const RECONNECT_MS = 3000;
 const CONSOLE_MAX = 500;
 
@@ -191,6 +191,27 @@ async function selectorCenter(tabId, selector) {
   return r.value;
 }
 
+async function elementCenterByJs(tabId, js) {
+  // Find an element via a JS expression and measure it in ONE page round trip,
+  // so the click that follows can't aim at a stale rect.
+  const expr = `(async () => {
+    const el = await (${js});
+    if (!el) return { err: "expression returned null/undefined" };
+    if (!(el instanceof Element)) return { err: "expression did not return a DOM Element (got " + (typeof el) + ")" };
+    el.scrollIntoView({ block: "center", inline: "center" });
+    const r = el.getBoundingClientRect();
+    if (!r.width && !r.height) return { err: "element has zero size (hidden?)" };
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2,
+             tag: el.tagName.toLowerCase(),
+             text: ((el.innerText || el.getAttribute("aria-label") || "").trim()).slice(0, 80) };
+  })()`;
+  const r = await evalInTab(tabId, expr);
+  const v = r.value;
+  if (!v || v.err) throw new Error("click js: " + ((v && v.err) || "no result"));
+  await sleep(100); // let scrollIntoView settle before we aim a click at it
+  return v;
+}
+
 async function clickAt(tabId, x, y) {
   await attach(tabId);
   const base = { x, y, button: "left", clickCount: 1, pointerType: "mouse" };
@@ -284,10 +305,54 @@ async function dispatch(cmd, a) {
     case "click": {
       const tabId = await resolveTab(a);
       let { x, y } = a;
-      if (a.selector) ({ x, y } = await selectorCenter(tabId, a.selector));
-      if (x == null || y == null) throw new Error("need selector or x/y");
+      let element;
+      if (a.js) {
+        const c = await elementCenterByJs(tabId, a.js);
+        ({ x, y } = c);
+        element = { tag: c.tag, text: c.text };
+      } else if (a.selector) {
+        ({ x, y } = await selectorCenter(tabId, a.selector));
+      }
+      if (x == null || y == null) throw new Error("need js, selector, or x/y");
       const clicked = await clickAt(tabId, x, y);
-      return { clicked };
+      return element ? { clicked, element } : { clicked };
+    }
+
+    case "wait_for": {
+      const tabId = await resolveTab(a);
+      if (!a.js && !a.selector) throw new Error("need js or selector");
+      const expr = a.js
+        ? `(async () => { const v = await (${a.js}); return v || null; })()`
+        : `document.querySelector(${JSON.stringify(a.selector)}) ? true : null`;
+      const timeout = Math.min(a.timeout_ms || 15000, 110000);
+      const poll = Math.max(a.poll_ms || 100, 50);
+      const start = Date.now();
+      for (;;) {
+        let v = null;
+        try {
+          v = (await evalInTab(tabId, expr)).value;
+        } catch (e) {
+          // execution context torn down mid-navigation — keep polling
+        }
+        if (v != null && v !== false) {
+          return { ready: true, value: v, waited_ms: Date.now() - start };
+        }
+        if (Date.now() - start >= timeout) {
+          return { ready: false, waited_ms: Date.now() - start };
+        }
+        await sleep(poll);
+      }
+    }
+
+    case "version": {
+      return { version: VERSION };
+    }
+
+    case "reload_extension": {
+      // Dev convenience: picks up edited extension code without a trip to
+      // chrome://extensions. Reply first, then reload (reload kills this worker).
+      setTimeout(() => chrome.runtime.reload(), 200);
+      return { reloading: true, version: VERSION };
     }
 
     case "type": {

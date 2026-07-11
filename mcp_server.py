@@ -19,7 +19,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("CLAWD_BROWSER_PORT", "8765"))
 BRIDGE_URL = f"http://127.0.0.1:{PORT}"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 def log(msg):
@@ -116,12 +116,33 @@ TOOLS = [
     },
     {
         "name": "browser_click",
-        "description": "Click an element in a tab, by CSS selector (scrolled into view first) or by viewport x/y coordinates. Dispatches trusted mouse events.",
+        "description": "Click an element in a tab. Target it one of three ways: js (a JS expression evaluating to a DOM Element — may be async; the element is scrolled into view, measured, and clicked in one atomic operation, immune to stale coordinates; prefer this on dynamic pages), a CSS selector (scrolled into view first), or viewport x/y coordinates. Dispatches trusted mouse events. With js, the reply echoes the clicked element's tag and text so you can verify the target.",
         "inputSchema": {
             "type": "object",
-            "properties": {**TAB_ID, "selector": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}},
+            "properties": {
+                **TAB_ID,
+                "js": {"type": "string", "description": "JS expression returning the Element to click, e.g. \"[...document.querySelectorAll('button')].find(b => /^Block$/i.test(b.innerText))\"."},
+                "selector": {"type": "string"},
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+            },
         },
         "cmd": "click",
+    },
+    {
+        "name": "browser_wait_for",
+        "description": "Wait until a condition holds in a tab, instead of guessing with sleeps. Give either a CSS selector (resolves when it matches) or a js expression (re-evaluated every poll_ms until it returns a truthy value — note: falsy-but-valid results like 0 or '' are treated as not-ready, so return an object/array/true). Survives mid-wait navigations. Returns {ready, value, waited_ms}; ready=false means it timed out (not an error).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                **TAB_ID,
+                "js": {"type": "string", "description": "Expression to poll until truthy; its value is returned."},
+                "selector": {"type": "string", "description": "Resolve when document.querySelector matches."},
+                "timeout_ms": {"type": "integer", "description": "Give up after this long (default 15000, max 110000)."},
+                "poll_ms": {"type": "integer", "description": "Poll interval (default 100, min 50)."},
+            },
+        },
+        "cmd": "wait_for",
     },
     {
         "name": "browser_type",
