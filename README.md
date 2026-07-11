@@ -36,6 +36,13 @@ Claude Code ──stdio/MCP──> mcp_server.py ──HTTP──> bridge.py <�
 3. That's it. The bridge starts on demand; the extension reconnects every few
    seconds until it finds it.
 
+**Sharing the browser with any Claude session:** click the extension's toolbar
+icon — the popup copies a self-contained skill prompt to the clipboard (and
+shows bridge health). Paste it into any Claude Code session and that session
+knows how to drive this browser: via the MCP tools if it has them, otherwise
+via plain `curl` against the bridge's HTTP API (`POST /cmd`) — no MCP
+registration needed. The text lives in `extension/skill.txt`.
+
 Port defaults to `8765`; override with `CLAWD_BROWSER_PORT` (the extension side
 reads `port` from `chrome.storage.local`).
 

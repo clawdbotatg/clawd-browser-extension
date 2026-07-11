@@ -1,0 +1,54 @@
+# Skill: drive my real Chrome browser (clawd-browser)
+
+My machine runs the Clawd Browser extension. A local bridge at http://127.0.0.1:8765
+lets you fully drive my real, logged-in Chrome: list/open tabs, read pages, take
+screenshots, click, type, run JS. These are my live sessions and accounts — ask
+before doing anything destructive or outward-facing (sending, posting, deleting,
+buying).
+
+## If you already have the MCP tools
+If tools named mcp__clawd-browser__* are available in this session, just use them
+and ignore the HTTP section below.
+
+## Otherwise: plain HTTP from your shell
+Every action is one POST. Replies are {"ok":true,"result":{...}} or
+{"ok":false,"error":"..."}.
+
+  curl -s http://127.0.0.1:8765/status
+    -> {"ok":true,"extension_connected":true}
+  curl -s http://127.0.0.1:8765/cmd -d '{"cmd":"tabs"}'
+
+If the connection is refused, start the bridge (repo path on this machine):
+  nohup python3 ~/clawd/clawd-harness/projects/clawd-browser-extension/bridge.py >/dev/null 2>&1 &
+If it says "extension not connected", Chrome with the extension isn't running —
+tell me instead of retrying.
+
+## Commands
+POST /cmd with {"cmd":<name>,"args":{...}}. Omitting tab_id targets the active
+tab; get tab_ids from "tabs".
+
+  tabs        {}                                  -> every tab: tab_id, url, title, active, window_id, status
+  open        {url}                               -> new tab, waits for load
+  navigate    {tab_id?, url}                      -> point a tab somewhere, waits for load
+  close_tab   {tab_id?}
+  read        {tab_id?, max_chars?}               -> page innerText + title/url (default 20k chars)
+  screenshot  {tab_id?}                           -> {"result":{"data":<base64 png>}} — works on unfocused tabs
+  eval        {tab_id?, code}                     -> run JS in the page, returns the value
+  click       {tab_id?, selector} or {tab_id?, x, y}  -> real trusted click (scrolls target into view)
+  type        {tab_id?, text, selector?, submit?} -> clicks selector to focus, inserts text; submit=true presses Enter
+  key         {tab_id?, key}                      -> Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space
+  console     {tab_id?, limit?, clear?}           -> captured console logs (capture starts on first use)
+  detach      {tab_id?}                           -> remove Chrome's "is being debugged" banner from a tab
+
+## Screenshot recipe
+  curl -s http://127.0.0.1:8765/cmd -d '{"cmd":"screenshot","args":{"tab_id":123}}' \
+   | python3 -c 'import sys,json,base64; open("/tmp/clawd-shot.png","wb").write(base64.b64decode(json.load(sys.stdin)["result"]["data"]))'
+Then Read /tmp/clawd-shot.png to look at it.
+
+## Notes
+- chrome:// pages are off-limits (Chrome blocks extensions there).
+- Clicks/typing are trusted CDP input events — they work on React apps and don't
+  need the tab focused, so you can drive background tabs silently.
+- Prefer read/eval to extract data; screenshots for visual verification.
+- To get these as native MCP tools in future sessions:
+  claude mcp add clawd-browser --scope user -- python3 ~/clawd/clawd-harness/projects/clawd-browser-extension/mcp_server.py

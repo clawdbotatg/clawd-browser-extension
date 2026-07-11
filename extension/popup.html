@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    width: 300px; margin: 0; padding: 14px 16px;
+    background: #1a1714; color: #e8e0d5;
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  h1 { font-size: 14px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+  h1 img { width: 20px; height: 20px; }
+  .row { display: flex; align-items: center; gap: 7px; margin: 3px 0; color: #b8ad9d; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #6b6357; flex: none; }
+  .dot.ok { background: #4cc26a; }
+  .dot.bad { background: #d9534f; }
+  #copied {
+    margin-top: 12px; padding: 8px 10px; border-radius: 6px;
+    background: #2a3d2e; color: #9fdcae; display: none;
+  }
+  #copied.show { display: block; }
+  button {
+    margin-top: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px;
+    background: #cc7a3d; color: #1a1714; font: inherit; font-weight: 700; cursor: pointer;
+  }
+  button:hover { background: #e08a48; }
+  .hint { margin-top: 10px; color: #8a8072; font-size: 11px; }
+</style>
+</head>
+<body>
+  <h1><img src="icons/icon-32.png" alt="">Clawd Browser</h1>
+  <div class="row"><span id="bridge-dot" class="dot"></span><span id="bridge-txt">bridge: checking…</span></div>
+  <div class="row"><span id="ext-dot" class="dot"></span><span id="ext-txt">extension link: checking…</span></div>
+  <div id="copied">✓ Skill prompt copied — paste it into any Claude session.</div>
+  <button id="copy">Copy skill prompt</button>
+  <div class="hint">The copied text teaches a Claude Code session how to drive this browser (MCP tools or plain curl).</div>
+  <script src="popup.js"></script>
+</body>
+</html>
