@@ -4,7 +4,7 @@
 // the tab, JS eval, console capture.
 
 const DEFAULT_PORT = 8765;
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 const RECONNECT_MS = 3000;
 const CONSOLE_MAX = 500;
 
@@ -332,7 +332,10 @@ async function dispatch(cmd, a) {
         try {
           v = (await evalInTab(tabId, expr)).value;
         } catch (e) {
-          // execution context torn down mid-navigation — keep polling
+          // Context torn down mid-navigation is fine — keep polling. A tab
+          // that no longer exists is not: fail fast, don't burn the timeout.
+          const gone = await chrome.tabs.get(tabId).then(() => false, () => true);
+          if (gone) throw new Error(`tab ${tabId} no longer exists`);
         }
         if (v != null && v !== false) {
           return { ready: true, value: v, waited_ms: Date.now() - start };

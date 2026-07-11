@@ -181,7 +181,7 @@ async function main() {
   // -- v0.2.0 commands: js-targeted click + wait_for + version
   console.log("\n== v0.2.0 commands ==");
   const ver = await cmd("version");
-  check("version command", ver.ok && ver.result.version === "0.3.0", JSON.stringify(ver));
+  check("version command", ver.ok && ver.result.version === "0.3.1", JSON.stringify(ver));
 
   const jsClick = await cmd("click", { tab_id: tabId, js: "[...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'bump')" });
   check("click by js expression echoes element", jsClick.ok && jsClick.result.element?.tag === "button" && jsClick.result.element?.text === "bump", JSON.stringify(jsClick));
@@ -202,6 +202,9 @@ async function main() {
 
   const wfTimeout = await cmd("wait_for", { tab_id: tabId, selector: "#never", timeout_ms: 700 });
   check("wait_for timeout is ready:false, not an error", wfTimeout.ok && wfTimeout.result.ready === false && wfTimeout.result.waited_ms >= 700, JSON.stringify(wfTimeout));
+
+  const wfGone = await cmd("wait_for", { tab_id: 999999999, selector: "#x", timeout_ms: 10000 });
+  check("wait_for on a vanished tab fails fast", !wfGone.ok && /no longer exists/.test(wfGone.error || ""), JSON.stringify(wfGone));
 
   // -- now the full MCP stdio path
   console.log("\n== mcp server (stdio) ==");
