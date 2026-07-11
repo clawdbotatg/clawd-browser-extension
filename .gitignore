@@ -1,0 +1,4 @@
+bridge.log
+node_modules/
+.DS_Store
+test/tmp-profile/

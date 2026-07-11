@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Clawd Browser",
+  "version": "0.1.0",
+  "description": "Lets a local Claude Code session drive this browser through a localhost bridge.",
+  "background": { "service_worker": "background.js" },
+  "permissions": ["tabs", "debugger", "alarms", "storage"],
+  "host_permissions": ["<all_urls>"]
+}
