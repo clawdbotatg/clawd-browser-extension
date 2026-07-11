@@ -34,11 +34,21 @@ tab; get tab_ids from "tabs".
   read        {tab_id?, max_chars?}               -> page innerText + title/url (default 20k chars)
   screenshot  {tab_id?}                           -> {"result":{"data":<base64 png>}} — works on unfocused tabs
   eval        {tab_id?, code}                     -> run JS in the page, returns the value
-  click       {tab_id?, selector} or {tab_id?, x, y}  -> real trusted click (scrolls target into view)
+  click       {tab_id?, js} or {tab_id?, selector} or {tab_id?, x, y}
+              -> real trusted click (scrolls target into view). js = expression
+                 returning the Element to click — found, measured, and clicked
+                 atomically (no stale coordinates); prefer it on dynamic pages.
+                 Reply echoes the element's tag+text so you can verify the target.
+  wait_for    {tab_id?, js? selector?, timeout_ms?, poll_ms?}
+              -> poll until selector matches / js returns truthy (default 15s);
+                 returns {ready, value, waited_ms}, ready=false on timeout.
+                 Use instead of sleeping and hoping the page rendered.
   type        {tab_id?, text, selector?, submit?} -> clicks selector to focus, inserts text; submit=true presses Enter
   key         {tab_id?, key}                      -> Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space
   console     {tab_id?, limit?, clear?}           -> captured console logs (capture starts on first use)
   detach      {tab_id?}                           -> remove Chrome's "is being debugged" banner from a tab
+  version     {}                                  -> running extension code version
+  reload_extension {}                             -> extension reloads itself (picks up edited code from disk)
 
 ## Screenshot recipe
   curl -s http://127.0.0.1:8765/cmd -d '{"cmd":"screenshot","args":{"tab_id":123}}' \

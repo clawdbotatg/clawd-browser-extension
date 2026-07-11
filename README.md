@@ -56,7 +56,8 @@ reads `port` from `chrome.storage.local`).
 | `browser_screenshot` | PNG of the viewport (tab needn't be focused) |
 | `browser_read` | page text (`innerText`) + url + title |
 | `browser_eval` | run JS in the page, promises awaited |
-| `browser_click` | trusted click by CSS selector or x/y |
+| `browser_click` | trusted click by `js` expression → Element (atomic find+measure+click, no stale rects), CSS selector, or x/y |
+| `browser_wait_for` | poll until a selector matches / a `js` expression is truthy — replaces guessy sleeps |
 | `browser_type` | trusted keystrokes; optional focus selector + Enter |
 | `browser_key` | press Enter/Tab/Escape/arrows/etc. |
 | `browser_console` | read captured console messages |

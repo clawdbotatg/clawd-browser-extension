@@ -23,7 +23,12 @@ const PW_BASE = process.env.PLAYWRIGHT_CORE_DIR || "/Users/clawd/clawd-harness/t
 const require = createRequire(path.join(PW_BASE, "x.js"));
 const { chromium } = require("playwright-core");
 
-const BRIDGE_PORT = 8765;
+// Not 8765: the live bridge + real Chrome extension own that port, and the
+// bridge holds ONE extension slot — on a shared port the test extension and
+// the real one steal it from each other every reconnect. The test extension
+// still dials 8765 once at startup (storage isn't set yet); that transient
+// drop of the real extension self-heals in ~3s.
+const BRIDGE_PORT = +(process.env.CLAWD_BROWSER_PORT || 8766);
 const PAGE_PORT = 8123;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -69,7 +74,9 @@ const TEST_PAGE = `<!doctype html>
   <input id="inp" type="text">
   <span id="submitted">no</span>
 </form>
-<script>console.log("page-loaded-marker");</script>`;
+<script>console.log("page-loaded-marker");
+setTimeout(() => { const d = document.createElement("div"); d.id = "late"; d.textContent = "late-elem"; document.body.appendChild(d); }, 1200);
+</script>`;
 
 async function main() {
   const cleanup = [];
@@ -86,7 +93,10 @@ async function main() {
 
   // -- bridge
   console.log("starting bridge.py ...");
-  const bridge = spawn("python3", [path.join(ROOT, "bridge.py")], { stdio: ["ignore", "inherit", "inherit"] });
+  const bridge = spawn("python3", [path.join(ROOT, "bridge.py")], {
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...process.env, CLAWD_BROWSER_PORT: String(BRIDGE_PORT) },
+  });
   cleanup.push(() => bridge.kill());
   for (let i = 0; ; i++) {
     try {
@@ -108,6 +118,18 @@ async function main() {
     args: [`--disable-extensions-except=${extPath}`, `--load-extension=${extPath}`],
   });
   cleanup.push(() => ctx.close().catch(() => {}));
+
+  // Point the test extension's service worker at OUR bridge port (it defaults
+  // to 8765 = the live bridge). Its 3s reconnect loop re-reads storage, so it
+  // lands on our port within a few seconds.
+  let sw = ctx.serviceWorkers()[0];
+  if (!sw) sw = await ctx.waitForEvent("serviceworker", { timeout: 15000 });
+  await sw.evaluate(async (port) => {
+    await chrome.storage.local.set({ port });
+    // If it already latched onto the default port, kick it loose — connect()
+    // no-ops while a socket is open, so it would never re-read storage.
+    try { ws && ws.close(); } catch {}
+  }, BRIDGE_PORT);
 
   // -- wait for the extension to dial in
   let connected = false;
@@ -156,9 +178,37 @@ async function main() {
   const promise = await cmd("eval", { tab_id: tabId, code: "new Promise(r => setTimeout(() => r('resolved!'), 100))" });
   check("eval awaits promises", promise.ok && promise.result.value === "resolved!", JSON.stringify(promise));
 
+  // -- v0.2.0 commands: js-targeted click + wait_for + version
+  console.log("\n== v0.2.0 commands ==");
+  const ver = await cmd("version");
+  check("version command", ver.ok && ver.result.version === "0.2.0", JSON.stringify(ver));
+
+  const jsClick = await cmd("click", { tab_id: tabId, js: "[...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'bump')" });
+  check("click by js expression echoes element", jsClick.ok && jsClick.result.element?.tag === "button" && jsClick.result.element?.text === "bump", JSON.stringify(jsClick));
+  const count3 = await cmd("eval", { tab_id: tabId, code: "document.getElementById('count').textContent" });
+  check("js click bumped counter to 3", count3.ok && count3.result.value === "3", JSON.stringify(count3));
+
+  const jsBad = await cmd("click", { tab_id: tabId, js: "42" });
+  check("click js non-element errors cleanly", !jsBad.ok && /did not return a DOM Element/.test(jsBad.error || ""), JSON.stringify(jsBad));
+
+  const wfNow = await cmd("wait_for", { tab_id: tabId, selector: "#btn" });
+  check("wait_for present selector is immediate", wfNow.ok && wfNow.result.ready === true && wfNow.result.waited_ms < 1000, JSON.stringify(wfNow));
+
+  const wfLate = await cmd("wait_for", { tab_id: tabId, selector: "#late", timeout_ms: 5000 });
+  check("wait_for catches late-added element", wfLate.ok && wfLate.result.ready === true, JSON.stringify(wfLate));
+
+  const wfJs = await cmd("wait_for", { tab_id: tabId, js: "document.getElementById('count').textContent === '3' ? { count: 3 } : null" });
+  check("wait_for js returns the truthy value", wfJs.ok && wfJs.result.ready === true && wfJs.result.value?.count === 3, JSON.stringify(wfJs));
+
+  const wfTimeout = await cmd("wait_for", { tab_id: tabId, selector: "#never", timeout_ms: 700 });
+  check("wait_for timeout is ready:false, not an error", wfTimeout.ok && wfTimeout.result.ready === false && wfTimeout.result.waited_ms >= 700, JSON.stringify(wfTimeout));
+
   // -- now the full MCP stdio path
   console.log("\n== mcp server (stdio) ==");
-  const mcp = spawn("python3", [path.join(ROOT, "mcp_server.py")], { stdio: ["pipe", "pipe", "inherit"] });
+  const mcp = spawn("python3", [path.join(ROOT, "mcp_server.py")], {
+    stdio: ["pipe", "pipe", "inherit"],
+    env: { ...process.env, CLAWD_BROWSER_PORT: String(BRIDGE_PORT) },
+  });
   cleanup.push(() => mcp.kill());
   const rl = readline.createInterface({ input: mcp.stdout });
   const pending = new Map();
@@ -187,7 +237,8 @@ async function main() {
   mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
 
   const list = await rpc("tools/list");
-  check("tools/list has 11 tools", list.result?.tools?.length === 11, JSON.stringify(list.result?.tools?.map((t) => t.name)));
+  check("tools/list has 12 tools", list.result?.tools?.length === 12, JSON.stringify(list.result?.tools?.map((t) => t.name)));
+  check("tools/list includes browser_wait_for", list.result?.tools?.some((t) => t.name === "browser_wait_for"), "");
 
   const call = await rpc("tools/call", { name: "browser_read", arguments: { tab_id: tabId } });
   const text = call.result?.content?.[0]?.text || "";
@@ -199,6 +250,12 @@ async function main() {
 
   const bad = await rpc("tools/call", { name: "browser_eval", arguments: { tab_id: tabId, code: "throw new Error('boom')" } });
   check("tool error surfaces as isError", bad.result?.isError === true && /boom/.test(bad.result?.content?.[0]?.text || ""), JSON.stringify(bad).slice(0, 200));
+
+  const wfCall = await rpc("tools/call", { name: "browser_wait_for", arguments: { tab_id: tabId, selector: "h1" } });
+  check("tools/call browser_wait_for", /"ready": true/.test(wfCall.result?.content?.[0]?.text || ""), JSON.stringify(wfCall).slice(0, 200));
+
+  const jsCall = await rpc("tools/call", { name: "browser_click", arguments: { tab_id: tabId, js: "document.getElementById('btn')" } });
+  check("tools/call browser_click with js", /"tag": "button"/.test(jsCall.result?.content?.[0]?.text || ""), JSON.stringify(jsCall).slice(0, 200));
 
   console.log(`\n${failures === 0 ? "ALL PASS" : failures + " FAILURE(S)"}`);
   process.exitCode = failures === 0 ? 0 : 1;
