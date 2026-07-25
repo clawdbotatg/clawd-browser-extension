@@ -3,8 +3,12 @@
 
 One port, two faces:
   - The extension dials ws://127.0.0.1:8765/ext (extensions can't listen, so it dials out).
+    SEVERAL browsers may connect at once (Chrome + Canary each running the extension);
+    the bridge keeps one live connection per browser (same User-Agent replaces itself).
   - Clients POST /cmd {"cmd": "...", "args": {...}} and get the extension's reply back.
-  - GET /status reports whether an extension is currently connected.
+    With multiple browsers connected, add {"target": "<id-prefix or UA substring>"} to
+    pick one; no target = the most recently connected (single-browser behavior unchanged).
+  - GET /status reports the connected browsers ({"connections": [{id, ua, ...}]}).
 
 Pure Python stdlib. Localhost only — anything on this machine can drive the browser
 through it, same trust model as any local automation bridge.
@@ -32,11 +36,21 @@ def log(msg):
 
 
 class Extension:
-    """The single live WebSocket connection to the Chrome extension."""
+    """One live WebSocket connection to a browser's Clawd extension.
 
-    def __init__(self, sock, addr):
+    Several browsers (Chrome + Canary, each with the extension loaded) can be
+    connected at once; each is one Extension keyed in EXTS. A reconnect from
+    the SAME browser (same User-Agent) replaces its old entry; a different
+    browser coexists. /cmd routes to the newest connection unless the request
+    carries {"target": "<id-prefix or UA substring>"}.
+    """
+
+    def __init__(self, sock, addr, ua=""):
         self.sock = sock
         self.addr = addr
+        self.ua = ua
+        self.id = uuid.uuid4().hex[:8]
+        self.connected_at = time.time()
         self.send_lock = threading.Lock()
         self.alive = True
 
@@ -61,8 +75,24 @@ class Extension:
             pass
 
 
-EXT = None  # current Extension, replaced on reconnect
+EXTS = {}  # id -> Extension (one live entry per connected browser)
 EXT_LOCK = threading.Lock()
+
+
+def pick_ext(target=None):
+    """Choose a connection: by id-prefix / UA-substring when target given, else newest."""
+    with EXT_LOCK:
+        exts = [e for e in EXTS.values() if e.alive]
+    if not exts:
+        return None, "extension not connected — is Chrome running with the Clawd Browser extension loaded?"
+    if target:
+        t = str(target).lower()
+        hits = [e for e in exts if e.id.startswith(t) or t in e.ua.lower()]
+        if not hits:
+            return None, f"no connection matching target '{target}' — connected: " + ", ".join(
+                f"{e.id} ({e.ua[-40:]})" for e in exts)
+        return max(hits, key=lambda e: e.connected_at), None
+    return max(exts, key=lambda e: e.connected_at), None
 PENDING = {}  # id -> {"event": Event, "reply": dict}
 PENDING_LOCK = threading.Lock()
 
@@ -162,16 +192,19 @@ def ws_read_message(sock):
 
 
 def serve_extension(sock, addr, headers):
-    global EXT
     ws_handshake(sock, headers)
-    ext = Extension(sock, addr)
+    ext = Extension(sock, addr, ua=headers.get("user-agent", ""))
     with EXT_LOCK:
-        old, EXT = EXT, ext
-    if old:
-        log(f"extension reconnected from {addr}; dropping old connection")
-        old.close()
-    else:
-        log(f"extension connected from {addr}")
+        # Same browser (same UA) redialing replaces its old entry; other browsers coexist.
+        stale = [e for e in EXTS.values() if e.ua == ext.ua]
+        for e in stale:
+            EXTS.pop(e.id, None)
+        EXTS[ext.id] = ext
+    for e in stale:
+        log(f"extension {e.id} reconnected as {ext.id} from {addr}; dropping old connection")
+        e.close()
+    if not stale:
+        log(f"extension connected: {ext.id} from {addr} ua=…{ext.ua[-40:]}")
     sock.settimeout(None)
     try:
         while ext.alive:
@@ -202,9 +235,9 @@ def serve_extension(sock, addr, headers):
     finally:
         ext.close()
         with EXT_LOCK:
-            if EXT is ext:
-                EXT = None
-                log("extension disconnected")
+            if EXTS.get(ext.id) is ext:
+                EXTS.pop(ext.id, None)
+                log(f"extension {ext.id} disconnected")
 
 
 # ---------------------------------------------------------------- HTTP side
@@ -222,13 +255,9 @@ def handle_cmd(sock, headers, leftover):
     if not cmd:
         return http_respond(sock, "400 Bad Request", {"ok": False, "error": "missing cmd"})
 
-    with EXT_LOCK:
-        ext = EXT
+    ext, err = pick_ext(req.get("target"))
     if not ext:
-        return http_respond(
-            sock, "200 OK",
-            {"ok": False, "error": "extension not connected — is Chrome running with the Clawd Browser extension loaded?"},
-        )
+        return http_respond(sock, "200 OK", {"ok": False, "error": err})
 
     mid = uuid.uuid4().hex
     slot = {"event": threading.Event(), "reply": None}
@@ -245,7 +274,11 @@ def handle_cmd(sock, headers, leftover):
         reply.pop("id", None)
         return http_respond(sock, "200 OK", reply)
     except OSError as e:
-        return http_respond(sock, "200 OK", {"ok": False, "error": f"send to extension failed: {e}"})
+        with EXT_LOCK:
+            if EXTS.get(ext.id) is ext:
+                EXTS.pop(ext.id, None)
+        ext.close()
+        return http_respond(sock, "200 OK", {"ok": False, "error": f"send to extension failed (connection dropped): {e}"})
     finally:
         with PENDING_LOCK:
             PENDING.pop(mid, None)
@@ -259,8 +292,14 @@ def serve_client(sock, addr):
             return serve_extension(sock, addr, headers)
         if method == "GET" and path == "/status":
             with EXT_LOCK:
-                connected = EXT is not None
-            return http_respond(sock, "200 OK", {"ok": True, "extension_connected": connected})
+                conns = [
+                    {"id": e.id, "ua": e.ua, "addr": str(e.addr), "connected_at": e.connected_at}
+                    for e in EXTS.values() if e.alive
+                ]
+            return http_respond(
+                sock, "200 OK",
+                {"ok": True, "extension_connected": bool(conns), "connections": conns},
+            )
         if method == "POST" and path == "/cmd":
             return handle_cmd(sock, headers, leftover)
         return http_respond(sock, "404 Not Found", {"ok": False, "error": "unknown endpoint"})
