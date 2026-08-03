@@ -24,6 +24,12 @@
     background: #cc7a3d; color: #1a1714; font: inherit; font-weight: 700; cursor: pointer;
   }
   button:hover { background: #e08a48; }
+  button.secondary { background: #3a342c; color: #c8bfae; font-weight: 400; }
+  button.secondary:hover { background: #464036; }
+  #tab-line {
+    margin-top: 10px; color: #c8bfae; font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .hint { margin-top: 10px; color: #8a8072; font-size: 11px; }
 </style>
 </head>
@@ -31,9 +37,11 @@
   <h1><img src="icons/icon-32.png" alt="">Clawd Browser</h1>
   <div class="row"><span id="bridge-dot" class="dot"></span><span id="bridge-txt">bridge: checking…</span></div>
   <div class="row"><span id="ext-dot" class="dot"></span><span id="ext-txt">extension link: checking…</span></div>
-  <div id="copied">✓ Skill prompt copied — paste it into any Claude session.</div>
-  <button id="copy">Copy skill prompt</button>
-  <div class="hint">The copied text teaches a Claude Code session how to drive this browser (MCP tools or plain curl).</div>
+  <div id="tab-line"></div>
+  <div id="copied"></div>
+  <button id="copy-tab">Copy tab context</button>
+  <button id="copy-skill" class="secondary">Copy skill prompt</button>
+  <div class="hint">Tab context = "this is the tab I mean" (tab_id + url) for a Claude that already has the browser tools. Skill prompt = teach a session the tools from scratch (MCP or plain curl).</div>
   <script src="popup.js"></script>
 </body>
 </html>
