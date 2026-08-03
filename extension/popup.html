@@ -24,8 +24,6 @@
     background: #cc7a3d; color: #1a1714; font: inherit; font-weight: 700; cursor: pointer;
   }
   button:hover { background: #e08a48; }
-  button.secondary { background: #3a342c; color: #c8bfae; font-weight: 400; }
-  button.secondary:hover { background: #464036; }
   #tab-line {
     margin-top: 10px; color: #c8bfae; font-size: 12px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -38,10 +36,9 @@
   <div class="row"><span id="bridge-dot" class="dot"></span><span id="bridge-txt">bridge: checking…</span></div>
   <div class="row"><span id="ext-dot" class="dot"></span><span id="ext-txt">extension link: checking…</span></div>
   <div id="tab-line"></div>
-  <div id="copied"></div>
-  <button id="copy-tab">Copy tab context</button>
-  <button id="copy-skill" class="secondary">Copy skill prompt</button>
-  <div class="hint">Tab context = "this is the tab I mean" (tab_id + url) for a Claude that already has the browser tools. Skill prompt = teach a session the tools from scratch (MCP or plain curl).</div>
+  <div id="copied">✓ Copied — paste it into any Claude session.</div>
+  <button id="copy">Copy for Claude</button>
+  <div class="hint">One paste tells Claude which tab you mean (tab_id + url) AND where to learn the browser tools (the bridge serves the skill at /skill).</div>
   <script src="popup.js"></script>
 </body>
 </html>

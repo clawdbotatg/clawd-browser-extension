@@ -36,18 +36,15 @@ Claude Code ──stdio/MCP──> mcp_server.py ──HTTP──> bridge.py <�
 3. That's it. The bridge starts on demand; the extension reconnects every few
    seconds until it finds it.
 
-**Pointing a Claude at a specific tab:** click the extension's toolbar icon —
-the popup copies the current tab's context (tab_id, title, url) to the
-clipboard (and shows bridge health). Paste it into a Claude session that has
-the browser tools and it knows exactly which tab you're talking about, no
-"which of your 40 tabs?" round trip.
-
-**Teaching a session the tools from scratch:** the popup's secondary button
-copies a self-contained skill prompt instead. Paste it into any Claude Code
-session and that session knows how to drive this browser: via the MCP tools if
-it has them, otherwise via plain `curl` against the bridge's HTTP API
-(`POST /cmd`) — no MCP registration needed. The text lives in
-`extension/skill.txt`.
+**Sharing the browser with any Claude session — one copy, one paste:** click
+the extension's toolbar icon and the popup copies a single paste-able blob (and
+shows bridge health). It carries the current tab's context (tab_id, title, url)
+*plus* a link to the full instructions — the bridge serves `extension/skill.txt`
+at `GET /skill`. Paste it into any Claude session and it knows (1) how to drive
+this browser: the MCP tools if it has them, otherwise it fetches
+`curl -s http://127.0.0.1:8765/skill` and learns the plain-HTTP API — and
+(2) exactly which tab you're talking about, no "which of your 40 tabs?" round
+trip.
 
 Port defaults to `8765`; override with `CLAWD_BROWSER_PORT` (the extension side
 reads `port` from `chrome.storage.local`).

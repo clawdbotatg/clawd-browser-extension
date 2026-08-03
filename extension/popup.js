@@ -1,6 +1,8 @@
-// Popup: copy the active tab's context (or the skill prompt) + show bridge health.
+// Popup: copy ONE paste-able blob — the active tab's context plus a pointer to
+// the skill (the how-to-drive-me instructions the bridge serves at /skill).
 
 const DEFAULT_PORT = 8765;
+const REPO_SKILL = "~/clawd/clawd-harness/projects/clawd-browser-extension/extension/skill.txt";
 
 async function getPort() {
   const { port } = await chrome.storage.local.get("port");
@@ -12,26 +14,31 @@ async function activeTab() {
   return tab || null;
 }
 
-function tabContextText(tab) {
+function contextText(tab, port) {
   return [
-    "I'm talking about this specific browser tab — drive it with the clawd-browser tools:",
+    "You can drive my real, logged-in browser (clawd-browser). I'm talking about this tab:",
     `  tab_id: ${tab.id}`,
     `  title: ${tab.title || "(untitled)"}`,
     `  url: ${tab.url || "(no url)"}`,
-    `Pass tab_id ${tab.id} to any browser_* tool (browser_read, browser_screenshot, browser_click, …).`,
-    "If that tab_id no longer resolves, find this URL with browser_tabs.",
+    "",
+    "If you have mcp__clawd-browser__* tools, use them directly — pass tab_id " + tab.id,
+    "to target this tab (browser_read, browser_screenshot, browser_click, …).",
+    "Otherwise, learn the API first — read the skill:",
+    `  curl -s http://127.0.0.1:${port}/skill`,
+    `  (or Read the file at ${REPO_SKILL} — it also covers starting the bridge)`,
+    `If tab_id ${tab.id} no longer resolves, find the url above with browser_tabs.`,
   ].join("\n");
 }
 
-async function skillText() {
-  const [text, port] = await Promise.all([
-    fetch(chrome.runtime.getURL("skill.txt")).then((r) => r.text()),
-    getPort(),
-  ]);
+async function skillText(port) {
+  const text = await fetch(chrome.runtime.getURL("skill.txt")).then((r) => r.text());
   return port === DEFAULT_PORT ? text : text.replaceAll(String(DEFAULT_PORT), String(port));
 }
 
-async function copyText(text, note) {
+async function copyContext() {
+  const [tab, port] = await Promise.all([activeTab(), getPort()]);
+  // No readable active tab (rare) — fall back to the full skill so the paste still works.
+  const text = tab ? contextText(tab, port) : await skillText(port);
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -43,22 +50,7 @@ async function copyText(text, note) {
     document.execCommand("copy");
     ta.remove();
   }
-  const el = document.getElementById("copied");
-  el.textContent = "✓ " + note;
-  el.classList.add("show");
-}
-
-async function copyTabContext() {
-  const tab = await activeTab();
-  if (!tab) {
-    await copySkill();
-    return;
-  }
-  await copyText(tabContextText(tab), "Tab context copied — paste it so Claude knows which tab you mean.");
-}
-
-async function copySkill() {
-  await copyText(await skillText(), "Skill prompt copied — paste it into any Claude session.");
+  document.getElementById("copied").classList.add("show");
 }
 
 async function showTab() {
@@ -85,8 +77,7 @@ async function checkBridge() {
   }
 }
 
-document.getElementById("copy-tab").addEventListener("click", copyTabContext);
-document.getElementById("copy-skill").addEventListener("click", copySkill);
+document.getElementById("copy").addEventListener("click", copyContext);
 checkBridge();
 showTab();
-copyTabContext(); // opening the popup counts as the click — copy the tab context immediately
+copyContext(); // opening the popup counts as the click — copy immediately

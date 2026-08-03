@@ -9,6 +9,8 @@ One port, two faces:
     With multiple browsers connected, add {"target": "<id-prefix or UA substring>"} to
     pick one; no target = the most recently connected (single-browser behavior unchanged).
   - GET /status reports the connected browsers ({"connections": [{id, ua, ...}]}).
+  - GET /skill serves extension/skill.txt (the how-to-drive-me instructions), so a
+    pasted tab-context blurb can just say "curl -s http://127.0.0.1:8765/skill".
 
 Pure Python stdlib. Localhost only — anything on this machine can drive the browser
 through it, same trust model as any local automation bridge.
@@ -25,6 +27,7 @@ import uuid
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("CLAWD_BROWSER_PORT", "8765"))
+SKILL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extension", "skill.txt")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_FRAME = 64 * 1024 * 1024  # screenshots come back as base64 PNGs
 DEFAULT_TIMEOUT = 30.0
@@ -134,6 +137,18 @@ def http_respond(sock, status, obj):
     hdr = (
         f"HTTP/1.1 {status}\r\n"
         "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        "Cache-Control: no-store\r\n"
+        "Connection: close\r\n\r\n"
+    ).encode()
+    sock.sendall(hdr + body)
+
+
+def http_respond_text(sock, status, text):
+    body = text.encode()
+    hdr = (
+        f"HTTP/1.1 {status}\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
         f"Content-Length: {len(body)}\r\n"
         "Cache-Control: no-store\r\n"
         "Connection: close\r\n\r\n"
@@ -300,6 +315,15 @@ def serve_client(sock, addr):
                 sock, "200 OK",
                 {"ok": True, "extension_connected": bool(conns), "connections": conns},
             )
+        if method == "GET" and path == "/skill":
+            try:
+                with open(SKILL_PATH, encoding="utf-8") as f:
+                    text = f.read()
+            except OSError:
+                return http_respond(sock, "404 Not Found", {"ok": False, "error": "skill.txt not found"})
+            if PORT != 8765:
+                text = text.replace("8765", str(PORT))
+            return http_respond_text(sock, "200 OK", text)
         if method == "POST" and path == "/cmd":
             return handle_cmd(sock, headers, leftover)
         return http_respond(sock, "404 Not Found", {"ok": False, "error": "unknown endpoint"})

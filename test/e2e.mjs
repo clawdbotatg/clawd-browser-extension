@@ -142,6 +142,14 @@ async function main() {
   check("extension connected to bridge", connected);
   if (!connected) { process.exitCode = 1; return; }
 
+  // GET /skill serves the instructions, port-substituted for non-default ports.
+  const skill = await (await fetch(`http://127.0.0.1:${BRIDGE_PORT}/skill`)).text();
+  check(
+    "GET /skill serves port-substituted skill.txt",
+    skill.includes("clawd-browser") && skill.includes(`:${BRIDGE_PORT}/cmd`) && !skill.includes("8765"),
+    skill.slice(0, 200),
+  );
+
   // -- drive it over the bridge HTTP API
   const open = await cmd("open", { url: PAGE_URL });
   check("open tab", open.ok && open.result.loaded, JSON.stringify(open));
@@ -181,7 +189,7 @@ async function main() {
   // -- v0.2.0 commands: js-targeted click + wait_for + version
   console.log("\n== v0.2.0 commands ==");
   const ver = await cmd("version");
-  check("version command", ver.ok && ver.result.version === "0.4.0", JSON.stringify(ver));
+  check("version command", ver.ok && ver.result.version === "0.5.0", JSON.stringify(ver));
 
   const jsClick = await cmd("click", { tab_id: tabId, js: "[...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'bump')" });
   check("click by js expression echoes element", jsClick.ok && jsClick.result.element?.tag === "button" && jsClick.result.element?.text === "bump", JSON.stringify(jsClick));
