@@ -4,7 +4,7 @@
 // the tab, JS eval, console capture.
 
 const DEFAULT_PORT = 8765;
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const RECONNECT_MS = 3000;
 const CONSOLE_MAX = 500;
 

@@ -19,7 +19,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("CLAWD_BROWSER_PORT", "8765"))
 BRIDGE_URL = f"http://127.0.0.1:{PORT}"
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 
 def log(msg):
@@ -72,12 +72,12 @@ def call_browser(cmd, args, timeout=60):
 
 # ---------------------------------------------------------------- tool definitions
 
-TAB_ID = {"tab_id": {"type": "integer", "description": "Target tab id (from browser_tabs). Omit to use the active tab."}}
+TAB_ID = {"tab_id": {"type": "integer", "description": "Target tab id (from browser_tabs); the bridge routes it to whichever connected browser owns the tab. Omit to use the active tab of the newest browser that has windows."}}
 
 TOOLS = [
     {
         "name": "browser_tabs",
-        "description": "List all open browser tabs with their tab_id, url, and title.",
+        "description": "List all open browser tabs with their tab_id, url, and title. If several browsers are connected to the bridge, tabs from all of them are listed, each tagged with a \"browser\" connection id.",
         "inputSchema": {"type": "object", "properties": {}},
         "cmd": "tabs",
     },

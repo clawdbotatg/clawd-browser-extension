@@ -56,6 +56,12 @@ tab; get tab_ids from "tabs".
 Then Read /tmp/clawd-shot.png to look at it.
 
 ## Notes
+- Several browsers (Chrome + Canary, each with the extension) can be connected
+  at once. The bridge routes for you: "tabs" lists every browser's tabs (each
+  tagged with a "browser" connection id), a tab_id goes to whichever browser
+  owns it, and commands without a tab_id go to the newest browser that has
+  windows. To pin one explicitly add {"target":"<id-prefix or UA substring>"}
+  at the top level of the /cmd body (ids from GET /status).
 - chrome:// pages are off-limits (Chrome blocks extensions there).
 - Clicks/typing are trusted CDP input events — they work on React apps and don't
   need the tab focused, so you can drive background tabs silently.

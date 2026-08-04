@@ -6,8 +6,12 @@ One port, two faces:
     SEVERAL browsers may connect at once (Chrome + Canary each running the extension);
     the bridge keeps one live connection per browser (same User-Agent replaces itself).
   - Clients POST /cmd {"cmd": "...", "args": {...}} and get the extension's reply back.
-    With multiple browsers connected, add {"target": "<id-prefix or UA substring>"} to
-    pick one; no target = the most recently connected (single-browser behavior unchanged).
+    With multiple browsers connected the bridge routes for you: "tabs" merges every
+    browser's tabs (each tagged with its "browser" connection id); an args.tab_id is
+    routed to whichever browser owns that tab; commands with no tab_id go to the most
+    recently connected browser that actually has tabs (a windowless Chrome process
+    never swallows commands). Add {"target": "<id-prefix or UA substring>"} to pin a
+    browser explicitly.
   - GET /status reports the connected browsers ({"connections": [{id, ua, ...}]}).
   - GET /skill serves extension/skill.txt (the how-to-drive-me instructions), so a
     pasted tab-context blurb can just say "curl -s http://127.0.0.1:8765/skill".
@@ -96,8 +100,48 @@ def pick_ext(target=None):
                 f"{e.id} ({e.ua[-40:]})" for e in exts)
         return max(hits, key=lambda e: e.connected_at), None
     return max(exts, key=lambda e: e.connected_at), None
+
+
+def alive_exts():
+    with EXT_LOCK:
+        return sorted((e for e in EXTS.values() if e.alive), key=lambda e: -e.connected_at)
+
+
 PENDING = {}  # id -> {"event": Event, "reply": dict}
 PENDING_LOCK = threading.Lock()
+
+TAB_OWNER = {}  # tab_id -> extension id (which browser owns the tab); best-effort cache
+TAB_OWNER_LOCK = threading.Lock()
+
+
+def remember_tabs(ext, tabs):
+    with TAB_OWNER_LOCK:
+        if len(TAB_OWNER) > 5000:
+            TAB_OWNER.clear()
+        for t in tabs:
+            TAB_OWNER[t.get("tab_id")] = ext.id
+
+
+def list_tabs(ext, timeout=5.0):
+    """Ask one browser for its tabs; [] on any failure. Feeds the owner cache."""
+    reply = ask_ext(ext, "tabs", {}, timeout)
+    tabs = (reply.get("result") or {}).get("tabs", []) if reply.get("ok") else []
+    remember_tabs(ext, tabs)
+    return tabs
+
+
+def route_for_tab(tab_id, exts, skip_cache=False):
+    """Find the browser owning tab_id: cache first, then ask each browser."""
+    if not skip_cache:
+        with TAB_OWNER_LOCK:
+            owner = TAB_OWNER.get(tab_id)
+        for e in exts:
+            if e.id == owner:
+                return e
+    for e in exts:
+        if any(t.get("tab_id") == tab_id for t in list_tabs(e)):
+            return e
+    return None
 
 
 def recv_exact(sock, n):
@@ -257,6 +301,80 @@ def serve_extension(sock, addr, headers):
 
 # ---------------------------------------------------------------- HTTP side
 
+def ask_ext(ext, cmd, args, timeout):
+    """Send one command to one browser and wait for its reply dict."""
+    mid = uuid.uuid4().hex
+    slot = {"event": threading.Event(), "reply": None}
+    with PENDING_LOCK:
+        PENDING[mid] = slot
+    try:
+        ext.send_json({"id": mid, "cmd": cmd, "args": args or {}})
+        if not slot["event"].wait(timeout):
+            return {"ok": False, "error": f"timeout after {timeout}s waiting for extension"}
+        reply = dict(slot["reply"])
+        reply.pop("id", None)
+        return reply
+    except OSError as e:
+        with EXT_LOCK:
+            if EXTS.get(ext.id) is ext:
+                EXTS.pop(ext.id, None)
+        ext.close()
+        return {"ok": False, "error": f"send to extension failed (connection dropped): {e}"}
+    finally:
+        with PENDING_LOCK:
+            PENDING.pop(mid, None)
+
+
+def route_cmd(req):
+    """Pick a browser for the request and run it (the multi-browser smarts)."""
+    cmd = req["cmd"]
+    args = req.get("args") or {}
+    timeout = min(float(req.get("timeout") or DEFAULT_TIMEOUT), MAX_TIMEOUT)
+
+    if req.get("target"):
+        ext, err = pick_ext(req["target"])
+        return ask_ext(ext, cmd, args, timeout) if ext else {"ok": False, "error": err}
+
+    exts = alive_exts()
+    if not exts:
+        return {"ok": False, "error": "extension not connected — is Chrome running with the Clawd Browser extension loaded?"}
+    if len(exts) == 1:
+        return ask_ext(exts[0], cmd, args, timeout)
+
+    # Several browsers connected, no explicit target:
+    # "tabs" answers for all of them, each tab tagged with its browser id.
+    if cmd == "tabs":
+        merged = []
+        for e in exts:
+            for t in list_tabs(e, timeout):
+                t["browser"] = e.id
+                merged.append(t)
+        return {"ok": True, "result": {"tabs": merged, "browsers": len(exts)}}
+
+    # A tab_id routes to whichever browser owns that tab.
+    tab_id = args.get("tab_id")
+    if tab_id is not None:
+        ext = route_for_tab(tab_id, exts)
+        if not ext:
+            return {"ok": False, "error": f"tab_id {tab_id} not found in any of the {len(exts)} connected browsers — list them with cmd 'tabs'"}
+        reply = ask_ext(ext, cmd, args, timeout)
+        err = (reply.get("error") or "").lower()
+        if not reply.get("ok") and ("no tab with id" in err or "no longer exists" in err):
+            # Stale cache (tab closed / browser restarted) — rediscover once.
+            ext = route_for_tab(tab_id, exts, skip_cache=True)
+            if not ext:
+                return {"ok": False, "error": f"tab_id {tab_id} not found in any of the {len(exts)} connected browsers — list them with cmd 'tabs'"}
+            reply = ask_ext(ext, cmd, args, timeout)
+        return reply
+
+    # No tab_id ("open", active-tab ops): newest browser that actually has tabs,
+    # so a windowless Chrome process never swallows the command.
+    for e in exts:
+        if list_tabs(e):
+            return ask_ext(e, cmd, args, timeout)
+    return ask_ext(exts[0], cmd, args, timeout)
+
+
 def handle_cmd(sock, headers, leftover):
     length = int(headers.get("content-length", "0"))
     body = leftover
@@ -266,37 +384,9 @@ def handle_cmd(sock, headers, leftover):
         req = json.loads(body.decode() or "{}")
     except ValueError:
         return http_respond(sock, "400 Bad Request", {"ok": False, "error": "invalid JSON"})
-    cmd = req.get("cmd")
-    if not cmd:
+    if not req.get("cmd"):
         return http_respond(sock, "400 Bad Request", {"ok": False, "error": "missing cmd"})
-
-    ext, err = pick_ext(req.get("target"))
-    if not ext:
-        return http_respond(sock, "200 OK", {"ok": False, "error": err})
-
-    mid = uuid.uuid4().hex
-    slot = {"event": threading.Event(), "reply": None}
-    with PENDING_LOCK:
-        PENDING[mid] = slot
-    try:
-        ext.send_json({"id": mid, "cmd": cmd, "args": req.get("args") or {}})
-        timeout = min(float(req.get("timeout") or DEFAULT_TIMEOUT), MAX_TIMEOUT)
-        if not slot["event"].wait(timeout):
-            return http_respond(
-                sock, "200 OK", {"ok": False, "error": f"timeout after {timeout}s waiting for extension"}
-            )
-        reply = dict(slot["reply"])
-        reply.pop("id", None)
-        return http_respond(sock, "200 OK", reply)
-    except OSError as e:
-        with EXT_LOCK:
-            if EXTS.get(ext.id) is ext:
-                EXTS.pop(ext.id, None)
-        ext.close()
-        return http_respond(sock, "200 OK", {"ok": False, "error": f"send to extension failed (connection dropped): {e}"})
-    finally:
-        with PENDING_LOCK:
-            PENDING.pop(mid, None)
+    return http_respond(sock, "200 OK", route_cmd(req))
 
 
 def serve_client(sock, addr):
