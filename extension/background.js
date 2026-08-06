@@ -276,6 +276,17 @@ async function dispatch(cmd, a) {
       return { closed: tabId };
     }
 
+    case "activate": {
+      // Bring a tab to the user's foreground: select it in its window and
+      // focus that window. The one command that deliberately steals focus —
+      // for "show me the thing you prepared" moments (e.g. a filled wallet
+      // form waiting for a human signature).
+      const tabId = await resolveTab(a);
+      const tab = await chrome.tabs.update(tabId, { active: true });
+      await chrome.windows.update(tab.windowId, { focused: true });
+      return tabInfo(await chrome.tabs.get(tabId));
+    }
+
     case "screenshot": {
       const tabId = await resolveTab(a);
       await attach(tabId);
