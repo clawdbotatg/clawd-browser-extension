@@ -23,6 +23,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import socket
 import struct
 import threading
@@ -45,17 +46,19 @@ def log(msg):
 class Extension:
     """One live WebSocket connection to a browser's Clawd extension.
 
-    Several browsers (Chrome + Canary, each with the extension loaded) can be
-    connected at once; each is one Extension keyed in EXTS. A reconnect from
-    the SAME browser (same User-Agent) replaces its old entry; a different
-    browser coexists. /cmd routes to the newest connection unless the request
+    Several browsers (Chrome profiles, Canary — each with the extension loaded)
+    can be connected at once; each is one Extension keyed in EXTS. A reconnect
+    from the SAME install (matching persistent ?iid=, falling back to UA only
+    between iid-less legacy connections) replaces its old entry; a different
+    install coexists. /cmd routes to the newest connection unless the request
     carries {"target": "<id-prefix or UA substring>"}.
     """
 
-    def __init__(self, sock, addr, ua=""):
+    def __init__(self, sock, addr, ua="", iid=""):
         self.sock = sock
         self.addr = addr
         self.ua = ua
+        self.iid = iid  # extension's persistent per-install id (?iid= on the WS URL)
         self.id = uuid.uuid4().hex[:8]
         self.connected_at = time.time()
         self.send_lock = threading.Lock()
@@ -250,12 +253,19 @@ def ws_read_message(sock):
             return message_opcode or 0x1, message
 
 
-def serve_extension(sock, addr, headers):
+def serve_extension(sock, addr, headers, rawpath=""):
     ws_handshake(sock, headers)
-    ext = Extension(sock, addr, ua=headers.get("user-agent", ""))
+    iid_m = re.search(r"[?&]iid=([A-Za-z0-9-]{1,64})", rawpath)
+    ext = Extension(sock, addr, ua=headers.get("user-agent", ""), iid=iid_m.group(1) if iid_m else "")
     with EXT_LOCK:
-        # Same browser (same UA) redialing replaces its old entry; other browsers coexist.
-        stale = [e for e in EXTS.values() if e.ua == ext.ua]
+        # Same browser redialing replaces its old entry; other browsers coexist.
+        # Identity = the extension's persistent per-install id (?iid=). UA is
+        # only a fallback for pre-iid extension code — and two profiles of the
+        # same Chrome share a UA, so UA-dedupe made them EVICT EACH OTHER (the
+        # 2026-08-11 "tabs keep disappearing" bug). Never match iid'd vs
+        # iid-less across each other.
+        stale = [e for e in EXTS.values()
+                 if ((e.iid == ext.iid) if ext.iid else (not e.iid and e.ua == ext.ua))]
         for e in stale:
             EXTS.pop(e.id, None)
         EXTS[ext.id] = ext
@@ -264,7 +274,12 @@ def serve_extension(sock, addr, headers):
         e.close()
     if not stale:
         log(f"extension connected: {ext.id} from {addr} ua=…{ext.ua[-40:]}")
-    sock.settimeout(None)
+    # Liveness: the extension pings every 20s, so a socket silent for 55s means
+    # the service worker was suspended without a clean close. Reap it — a zombie
+    # entry here absorbs routed commands (they 30s-timeout) and, worse, makes
+    # "tabs" silently return only the OTHER browser's tabs. socket.timeout is an
+    # OSError subclass, so the except below turns it into a normal disconnect.
+    sock.settimeout(55)
     try:
         while ext.alive:
             opcode, payload = ws_read_message(sock)
@@ -391,14 +406,14 @@ def handle_cmd(sock, headers, leftover):
 
 def serve_client(sock, addr):
     try:
-        method, path, headers, leftover = read_http_request(sock)
-        path = path.split("?")[0]
+        method, rawpath, headers, leftover = read_http_request(sock)
+        path = rawpath.split("?")[0]
         if headers.get("upgrade", "").lower() == "websocket" and path == "/ext":
-            return serve_extension(sock, addr, headers)
+            return serve_extension(sock, addr, headers, rawpath)
         if method == "GET" and path == "/status":
             with EXT_LOCK:
                 conns = [
-                    {"id": e.id, "ua": e.ua, "addr": str(e.addr), "connected_at": e.connected_at}
+                    {"id": e.id, "iid": e.iid, "ua": e.ua, "addr": str(e.addr), "connected_at": e.connected_at}
                     for e in EXTS.values() if e.alive
                 ]
             return http_respond(

@@ -4,7 +4,7 @@
 // the tab, JS eval, console capture.
 
 const DEFAULT_PORT = 8765;
-const VERSION = "0.6.0";
+const VERSION = "0.6.2";
 const RECONNECT_MS = 3000;
 const CONSOLE_MAX = 500;
 
@@ -13,7 +13,15 @@ let connecting = false;
 
 async function bridgeUrl() {
   const { port } = await chrome.storage.local.get("port");
-  return `ws://127.0.0.1:${port || DEFAULT_PORT}/ext`;
+  // Persistent per-install id: the bridge dedupes reconnects by this, NOT by
+  // User-Agent — two profiles of the same Chrome share a UA, and UA-dedupe
+  // made them evict each other on every reconnect (2026-08-11).
+  let { iid } = await chrome.storage.local.get("iid");
+  if (!iid) {
+    iid = crypto.randomUUID();
+    await chrome.storage.local.set({ iid });
+  }
+  return `ws://127.0.0.1:${port || DEFAULT_PORT}/ext?iid=${iid}`;
 }
 
 async function connect() {
@@ -40,8 +48,15 @@ async function connect() {
   }
 }
 
-// App-level ping: an active WebSocket keeps the service worker alive (Chrome 116+).
+// Keepalive, belt and braces (MV3 suspends an idle worker after ~30s):
+//  - chrome.runtime.getPlatformInfo() every 20s — an extension-API call is the
+//    reliable idle-timer reset; WS-activity-extends-lifetime (Chrome 116+)
+//    alone has proven flaky in practice (the "connection flaps" this fixes).
+//  - the app-level ws ping doubles as bridge-side liveness: the bridge now
+//    reaps any connection silent >55s, so if the worker IS suspended its
+//    zombie socket dies fast instead of absorbing routed commands.
 setInterval(() => {
+  chrome.runtime.getPlatformInfo(() => {});
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: "ping" }));
   }

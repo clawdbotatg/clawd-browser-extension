@@ -136,6 +136,14 @@ async function main() {
   for (let i = 0; i < 100; i++) {
     const s = await (await fetch(`http://127.0.0.1:${BRIDGE_PORT}/status`)).json();
     if (s.extension_connected) { connected = true; break; }
+    // Re-kick while waiting: if the first kick ran mid-dial (ws still null),
+    // the sw latches onto the live 8765 bridge and connect() no-ops forever.
+    // Only close a socket pointed at the WRONG port, never our own.
+    if (i % 5 === 4) {
+      await sw.evaluate((port) => {
+        try { if (ws && !ws.url.includes(`:${port}/`)) ws.close(); } catch {}
+      }, BRIDGE_PORT);
+    }
     await sleep(200);
   }
   console.log("\n== bridge/extension ==");
@@ -189,7 +197,7 @@ async function main() {
   // -- v0.2.0 commands: js-targeted click + wait_for + version
   console.log("\n== v0.2.0 commands ==");
   const ver = await cmd("version");
-  check("version command", ver.ok && ver.result.version === "0.6.0", JSON.stringify(ver));
+  check("version command", ver.ok && ver.result.version === "0.6.2", JSON.stringify(ver));
 
   const jsClick = await cmd("click", { tab_id: tabId, js: "[...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'bump')" });
   check("click by js expression echoes element", jsClick.ok && jsClick.result.element?.tag === "button" && jsClick.result.element?.text === "bump", JSON.stringify(jsClick));

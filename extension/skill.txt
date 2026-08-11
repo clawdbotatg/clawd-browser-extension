@@ -23,6 +23,24 @@ If the connection is refused, start the bridge (repo path on this machine):
 If it says "extension not connected", Chrome with the extension isn't running —
 tell me instead of retrying.
 
+## Connections flap — a missing tab is usually NOT gone
+Chrome suspends the extension's MV3 service worker whenever it feels like it,
+which drops that browser's websocket until the next wake (seconds to ~a minute).
+This is normal and self-healing. Consequences while a browser is mid-blip:
+
+- "No tab with given id N" usually means the tab's OWNING browser is briefly
+  disconnected (your command got routed to a different connected browser), not
+  that the tab was closed. Retry the same call every few seconds for ~60s
+  before drawing any conclusion.
+- "tabs" only lists browsers connected AT THIS INSTANT. A tab absent from the
+  list is not evidence it's closed — especially if another browser's tabs are
+  what came back. Re-poll; the tab reappears when its browser reconnects.
+- Connection ids in GET /status change on every reconnect, so a changed id is
+  a reconnect, not a different browser — and pinning {"target":...} by id goes
+  stale for the same reason. After a blip, re-find the tab by URL via "tabs".
+- Only conclude the browser is really gone if it stays absent for ~2 minutes
+  of re-polling — then tell me instead of guessing.
+
 ## Commands
 POST /cmd with {"cmd":<name>,"args":{...}}. Omitting tab_id targets the active
 tab; get tab_ids from "tabs".
