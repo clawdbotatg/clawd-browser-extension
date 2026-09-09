@@ -29,6 +29,9 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .hint { margin-top: 10px; color: #8a8072; font-size: 11px; }
+  .small { margin-top: 10px; display: flex; justify-content: space-between; font-size: 11px; }
+  .small a { color: #8a8072; text-decoration: none; }
+  .small a:hover { color: #c8bfae; text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -39,6 +42,10 @@
   <div id="copied">✓ Copied — paste it into any Claude session.</div>
   <button id="copy">Copy for Claude</button>
   <div class="hint">One paste tells Claude which tab you mean (tab_id + url) AND where to learn the browser tools (the bridge serves the skill at /skill).</div>
-  <script src="popup.js"></script>
+  <div class="small">
+    <a id="open" href="#" title="Open a new harness session about this tab">open a session ↗</a>
+    <a id="opts" href="#" title="Harness URL, project, machine">settings</a>
+  </div>
+  <script type="module" src="popup.js"></script>
 </body>
 </html>

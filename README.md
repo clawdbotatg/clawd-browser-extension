@@ -46,6 +46,14 @@ this browser: the MCP tools if it has them, otherwise it fetches
 (2) exactly which tab you're talking about, no "which of your 40 tabs?" round
 trip.
 
+**Open a session about this tab — one click:** under the copy button a small
+`open a session ↗` link opens your clawd-harness on a new session in a scratch
+project ([clawd-web](https://github.com/clawdbotatg/clawd-web)) with the tab
+context already sent, plus an opener ("give me a TLDR, then wait"). It uses the
+harness's compose deep link (`#/p/<project>/new?q=…&send=1`, see the harness's
+`docs/DEEPLINKS.md`) and reuses an open harness tab when there is one. Harness
+URL, project, machine and opener live in the extension's settings page.
+
 Port defaults to `8765`; override with `CLAWD_BROWSER_PORT` (the extension side
 reads `port` from `chrome.storage.local`).
 

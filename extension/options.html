@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    width: 340px; margin: 0; padding: 14px 16px;
+    background: #1a1714; color: #e8e0d5;
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  h1 { font-size: 14px; margin: 0 0 10px; }
+  label { display: block; margin-top: 10px; color: #b8ad9d; font-size: 11px; }
+  input, textarea {
+    width: 100%; box-sizing: border-box; margin-top: 3px; padding: 6px 8px;
+    border: 1px solid #3a342d; border-radius: 5px; background: #2a2521; color: #e8e0d5; font: inherit;
+  }
+  textarea { height: 64px; resize: vertical; }
+  .hint { color: #8a8072; font-size: 11px; margin-top: 2px; }
+  button {
+    margin-top: 12px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px;
+    background: #cc7a3d; color: #1a1714; font: inherit; font-weight: 700; cursor: pointer;
+  }
+  #saved { margin-top: 8px; color: #9fdcae; font-size: 11px; visibility: hidden; }
+</style>
+</head>
+<body>
+  <h1>open a session — settings</h1>
+  <label>harness url
+    <input id="harness" placeholder="https://h.atg.link">
+    <div class="hint">or http://127.0.0.1:8787 for one box</div>
+  </label>
+  <label>project
+    <input id="project" placeholder="github.com/clawdbotatg/clawd-web">
+    <div class="hint">fleet projectKey (repo host/owner/name), or a name / pid on one box</div>
+  </label>
+  <label>machine
+    <input id="machine" placeholder="(project default)">
+    <div class="hint">fleet id of the box this browser runs on — the session must live where the bridge is</div>
+  </label>
+  <label>opener
+    <textarea id="opener"></textarea>
+    <div class="hint">sent after the tab context as the first message</div>
+  </label>
+  <button id="save">Save</button>
+  <div id="saved">✓ saved</div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

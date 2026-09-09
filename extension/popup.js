@@ -1,33 +1,23 @@
 // Popup: copy ONE paste-able blob — the active tab's context plus a pointer to
 // the skill (the how-to-drive-me instructions the bridge serves at /skill).
-
-const DEFAULT_PORT = 8765;
-const REPO_SKILL = "~/clawd/clawd-harness/projects/clawd-browser-extension/extension/skill.txt";
+// Plus a quiet second act: open a harness session about this tab (link.js).
+import { DEFAULT_PORT, DEFAULTS, contextText, composeUrl, sessionText } from "./link.js";
 
 async function getPort() {
   const { port } = await chrome.storage.local.get("port");
   return port || DEFAULT_PORT;
 }
 
+async function getSettings() {
+  const s = await chrome.storage.local.get(Object.keys(DEFAULTS));
+  const out = { ...DEFAULTS };
+  for (const k of Object.keys(DEFAULTS)) if (s[k]) out[k] = s[k];
+  return out;
+}
+
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   return tab || null;
-}
-
-function contextText(tab, port) {
-  return [
-    "You can drive my real, logged-in browser (clawd-browser). I'm talking about this tab:",
-    `  tab_id: ${tab.id}`,
-    `  title: ${tab.title || "(untitled)"}`,
-    `  url: ${tab.url || "(no url)"}`,
-    "",
-    "If you have mcp__clawd-browser__* tools, use them directly — pass tab_id " + tab.id,
-    "to target this tab (browser_read, browser_screenshot, browser_click, …).",
-    "Otherwise, learn the API first — read the skill:",
-    `  curl -s http://127.0.0.1:${port}/skill`,
-    `  (or Read the file at ${REPO_SKILL} — it also covers starting the bridge)`,
-    `If tab_id ${tab.id} no longer resolves, find the url above with browser_tabs.`,
-  ].join("\n");
 }
 
 async function skillText(port) {
@@ -51,6 +41,27 @@ async function copyContext() {
     ta.remove();
   }
   document.getElementById("copied").classList.add("show");
+}
+
+// Open a harness session about the active tab. Reuses an open harness tab when
+// there is one (a hash change is a same-document nav — no UI reboot, and on the
+// fleet the tab's passkey login carries the spawn); else opens a new tab.
+async function openSession() {
+  const [tab, port, cfg] = await Promise.all([activeTab(), getPort(), getSettings()]);
+  if (!tab) return;
+  const url = composeUrl({
+    harness: cfg.harness, project: cfg.project, machine: cfg.machine,
+    text: sessionText(tab, port, cfg.opener), send: true,
+  });
+  const base = cfg.harness.replace(/\/+$/, "");
+  const [existing] = await chrome.tabs.query({ url: base + "/*" });
+  if (existing) {
+    await chrome.tabs.update(existing.id, { url, active: true });
+    await chrome.windows.update(existing.windowId, { focused: true });
+  } else {
+    await chrome.tabs.create({ url });
+  }
+  window.close();
 }
 
 async function showTab() {
@@ -78,6 +89,8 @@ async function checkBridge() {
 }
 
 document.getElementById("copy").addEventListener("click", copyContext);
+document.getElementById("open").addEventListener("click", (e) => { e.preventDefault(); openSession(); });
+document.getElementById("opts").addEventListener("click", (e) => { e.preventDefault(); chrome.runtime.openOptionsPage(); });
 checkBridge();
 showTab();
 copyContext(); // opening the popup counts as the click — copy immediately
