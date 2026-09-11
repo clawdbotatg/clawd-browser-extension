@@ -556,7 +556,8 @@ def main():
     log(f"clawd-browser bridge listening on http://{HOST}:{PORT} (extension: ws://{HOST}:{PORT}/ext)")
     hosts = lan_hosts()
     if BIND not in LOOPBACK and hosts:
-        log(f"LAN (token in path): " + " ".join(token_url(h) for h in hosts))
+        # token elided: the log is not a secrets store (GET /status hands it to loopback)
+        log("LAN (token in path): " + " ".join(f"http://{h}:{PORT}/k/<token>" for h in hosts))
     while True:
         sock, addr = srv.accept()
         threading.Thread(target=serve_client, args=(sock, addr), daemon=True).start()
