@@ -7,6 +7,10 @@ relays it to the Chrome extension over WebSocket. If the bridge isn't running
 it gets spawned automatically.
 
 Speaks newline-delimited JSON-RPC 2.0 on stdio. Pure stdlib.
+
+Remote bridge: set CLAWD_BROWSER_URL=http://<host>:8765/k/<token> (the LAN URL
+from a pasted tab context) to drive a browser on ANOTHER machine. Then nothing
+is auto-started here — the bridge lives with the browser.
 """
 import json
 import os
@@ -18,8 +22,9 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("CLAWD_BROWSER_PORT", "8765"))
-BRIDGE_URL = f"http://127.0.0.1:{PORT}"
-VERSION = "0.7.0"
+BRIDGE_URL = (os.environ.get("CLAWD_BROWSER_URL") or f"http://127.0.0.1:{PORT}").rstrip("/")
+REMOTE = not BRIDGE_URL.startswith(("http://127.", "http://localhost"))
+VERSION = "0.8.0"
 
 
 def log(msg):
@@ -48,6 +53,8 @@ def bridge_alive():
 def ensure_bridge():
     if bridge_alive() is not None:
         return True
+    if REMOTE:
+        return False
     log("bridge not running; starting it")
     logfile = open(os.path.join(HERE, "bridge.log"), "ab")
     subprocess.Popen(
@@ -63,6 +70,8 @@ def ensure_bridge():
 
 def call_browser(cmd, args, timeout=60):
     if not ensure_bridge():
+        if REMOTE:
+            return {"ok": False, "error": f"remote bridge {BRIDGE_URL} is not answering — it runs on the browser's machine; nothing to start here"}
         return {"ok": False, "error": "could not start the bridge (bridge.py) — see bridge.log"}
     try:
         return bridge_post(cmd, args, timeout)

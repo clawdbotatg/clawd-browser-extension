@@ -16,23 +16,41 @@ One port, two faces:
   - GET /skill serves extension/skill.txt (the how-to-drive-me instructions), so a
     pasted tab-context blurb can just say "curl -s http://127.0.0.1:8765/skill".
 
-Pure Python stdlib. Localhost only — anything on this machine can drive the browser
-through it, same trust model as any local automation bridge.
+Reach: the bridge listens on every interface (CLAWD_BROWSER_BIND, default 0.0.0.0)
+so a Claude session on ANOTHER machine on the LAN can drive this browser — that is
+what makes the extension's pasted tab context portable. Trust is by origin:
+  - loopback peers (this machine) are trusted as before, no token needed;
+  - anyone else must prefix every path with /k/<token>/ — the token is generated
+    once into .clawd-browser.token (0600) next to this file and is embedded in the
+    LAN URL the extension's popup pastes (GET /status hands it to loopback peers as
+    "lan"). No token → 403. So the paste IS the credential: whoever holds the blob
+    can drive the browser, which is exactly the sharing model wanted.
+  - GET /k/<token>/skill serves skill.txt rewritten so every example URL is the
+    token URL as the caller reached it (its own dial-in address), so a remote
+    session can follow the recipes verbatim.
+
+Pure Python stdlib.
 """
 import base64
 import hashlib
 import json
 import os
+import hmac
 import re
+import secrets
 import socket
 import struct
 import threading
 import time
 import uuid
 
-HOST = "127.0.0.1"
+HOST = "127.0.0.1"  # what loopback callers dial; the LAN face is BIND
+BIND = os.environ.get("CLAWD_BROWSER_BIND", "0.0.0.0")
 PORT = int(os.environ.get("CLAWD_BROWSER_PORT", "8765"))
-SKILL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extension", "skill.txt")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SKILL_PATH = os.path.join(HERE, "extension", "skill.txt")
+TOKEN_PATH = os.environ.get("CLAWD_BROWSER_TOKEN_FILE", os.path.join(HERE, ".clawd-browser.token"))
+LOOPBACK = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_FRAME = 64 * 1024 * 1024  # screenshots come back as base64 PNGs
 DEFAULT_TIMEOUT = 30.0
@@ -41,6 +59,66 @@ MAX_TIMEOUT = 120.0
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def load_token():
+    """The LAN access token: env override, else a per-install secret persisted
+    next to this file (created on first run, mode 0600)."""
+    tok = os.environ.get("CLAWD_BROWSER_TOKEN", "").strip()
+    if tok:
+        return tok
+    try:
+        with open(TOKEN_PATH, encoding="utf-8") as f:
+            tok = f.read().strip()
+        if re.fullmatch(r"[A-Za-z0-9_-]{16,128}", tok):
+            return tok
+    except OSError:
+        pass
+    tok = secrets.token_urlsafe(24)
+    fd = os.open(TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(tok + "\n")
+    return tok
+
+
+TOKEN = load_token()
+TOKEN_RE = re.compile(r"^/k/([A-Za-z0-9_-]{1,128})(/.*)?$")
+
+
+def lan_hosts():
+    """Names other machines on the LAN can dial this box by: the interface that
+    routes out first, any other non-loopback IPv4, then the mDNS hostname (which
+    survives a DHCP renumber). Cheap enough to compute per request."""
+    hosts = []
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("10.255.255.255", 1))  # no packet is sent; picks the outbound iface
+        ip = s.getsockname()[0]
+        s.close()
+        if not ip.startswith("127."):
+            hosts.append(ip)
+    except OSError:
+        pass
+    name = socket.gethostname()
+    try:
+        for info in socket.getaddrinfo(name, None, socket.AF_INET):
+            ip = info[4][0]
+            if ip not in hosts and not ip.startswith("127."):
+                hosts.append(ip)
+    except socket.gaierror:
+        pass
+    if name and "." in name and name not in hosts:
+        hosts.append(name)
+    return hosts
+
+
+def token_url(host):
+    return f"http://{host}:{PORT}/k/{TOKEN}"
+
+
+def lan_info():
+    hosts = lan_hosts()
+    return {"hosts": hosts, "urls": [token_url(h) for h in hosts], "token": TOKEN}
 
 
 class Extension:
@@ -407,6 +485,22 @@ def handle_cmd(sock, headers, leftover):
 def serve_client(sock, addr):
     try:
         method, rawpath, headers, leftover = read_http_request(sock)
+        # Trust by origin: loopback is this machine (no token); anyone else must
+        # carry /k/<token>/ in the path. `base` is how THIS caller reaches us —
+        # the skill's example URLs are rewritten to it so they work verbatim.
+        m = TOKEN_RE.match(rawpath)
+        if m and hmac.compare_digest(m.group(1), TOKEN):
+            rawpath = m.group(2) or "/"
+            base = token_url(sock.getsockname()[0])
+        elif addr[0] in LOOPBACK:
+            base = f"http://{HOST}:{PORT}"
+        else:
+            log(f"403 {addr[0]} {method} {rawpath[:40]!r} (no/bad token)")
+            return http_respond(sock, "403 Forbidden", {
+                "ok": False,
+                "error": "this bridge is on another machine: from here every path needs the "
+                         "/k/<token>/ prefix — use the bridge URL from the pasted tab context",
+            })
         path = rawpath.split("?")[0]
         if headers.get("upgrade", "").lower() == "websocket" and path == "/ext":
             return serve_extension(sock, addr, headers, rawpath)
@@ -418,7 +512,8 @@ def serve_client(sock, addr):
                 ]
             return http_respond(
                 sock, "200 OK",
-                {"ok": True, "extension_connected": bool(conns), "connections": conns},
+                {"ok": True, "extension_connected": bool(conns), "connections": conns,
+                 "base": base, "lan": lan_info()},
             )
         if method == "GET" and path == "/skill":
             try:
@@ -426,8 +521,20 @@ def serve_client(sock, addr):
                     text = f.read()
             except OSError:
                 return http_respond(sock, "404 Not Found", {"ok": False, "error": "skill.txt not found"})
+            text = text.replace("http://127.0.0.1:8765", base)
             if PORT != 8765:
                 text = text.replace("8765", str(PORT))
+            if not base.startswith("http://127."):
+                text += ("\n## You are on another machine\n"
+                         "The browser and its bridge live on the machine at " + base.split("/k/")[0] +
+                         ". Nothing bridge-related can be started or fixed from here; if the URL stops "
+                         "answering, tell me.\n")
+            else:
+                urls = lan_info()["urls"]
+                if urls:
+                    text += ("\n## From another machine on the LAN\n"
+                             "This bridge also answers at " + " or ".join(urls) + " — the /k/… path is the "
+                             "access token; a session elsewhere uses that in place of " + base + ".\n")
             return http_respond_text(sock, "200 OK", text)
         if method == "POST" and path == "/cmd":
             return handle_cmd(sock, headers, leftover)
@@ -444,9 +551,12 @@ def serve_client(sock, addr):
 def main():
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind((HOST, PORT))
+    srv.bind((BIND, PORT))
     srv.listen(16)
     log(f"clawd-browser bridge listening on http://{HOST}:{PORT} (extension: ws://{HOST}:{PORT}/ext)")
+    hosts = lan_hosts()
+    if BIND not in LOOPBACK and hosts:
+        log(f"LAN (token in path): " + " ".join(token_url(h) for h in hosts))
     while True:
         sock, addr = srv.accept()
         threading.Thread(target=serve_client, args=(sock, addr), daemon=True).start()

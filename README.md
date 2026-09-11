@@ -17,9 +17,9 @@ Claude Code ──stdio/MCP──> mcp_server.py ──HTTP──> bridge.py <�
   mouse/keyboard events, screenshots without focusing the tab, JS eval, and
   console capture. Chrome shows the "is debugging this browser" bar while a tab
   is attached — that's the price of trusted input.
-- **`bridge.py`** — localhost daemon, pure Python stdlib. One port, two faces:
+- **`bridge.py`** — daemon, pure Python stdlib. One port, two faces:
   WebSocket endpoint `/ext` for the extension, HTTP `POST /cmd` + `GET /status`
-  for clients.
+  for clients. Listens on the LAN as well as loopback (see *Cross-machine* below).
 - **`mcp_server.py`** — stdio MCP server Claude Code spawns per session (see
   `.mcp.json`). Thin client over the bridge's HTTP API; auto-starts the bridge
   if it isn't running.
@@ -45,6 +45,26 @@ this browser: the MCP tools if it has them, otherwise it fetches
 `curl -s http://127.0.0.1:8765/skill` and learns the plain-HTTP API — and
 (2) exactly which tab you're talking about, no "which of your 40 tabs?" round
 trip.
+
+**Cross-machine — the paste works from any computer on your LAN:** the bridge
+binds every interface (`CLAWD_BROWSER_BIND`, default `0.0.0.0`) and trusts by
+origin. Loopback callers (this machine) need nothing, as before. Anyone else
+must prefix every path with `/k/<token>/`; the token is generated once into
+`.clawd-browser.token` (gitignored, mode 0600) next to `bridge.py`, and the
+bridge hands it to the popup via `GET /status` (`lan: {hosts, urls, token}`).
+So the copied blob carries `bridge: http://192.168.x.y:8765/k/<token>` (plus
+the box's `.local` name as a fallback), and a Claude session on a different
+machine follows it verbatim: `curl -s <that url>/skill` returns the skill with
+every example URL rewritten to the token URL as the caller reached it. The
+paste is the credential — whoever holds it can drive that browser. Without a
+token from off-box the bridge answers 403. To get native MCP tools on the
+other machine, point this repo's server at the LAN URL:
+```sh
+claude mcp add clawd-browser --scope user -e CLAWD_BROWSER_URL=http://<host>:8765/k/<token> -- python3 /path/to/mcp_server.py
+```
+(with a remote URL it never tries to start a bridge locally — the bridge lives
+with the browser). Set `CLAWD_BROWSER_BIND=127.0.0.1` to go back to
+loopback-only.
 
 **Open a session about this tab — one click:** under the copy button a small
 `open a session ↗` link opens your clawd-harness on a new session in a scratch
@@ -85,6 +105,11 @@ default to the active tab.
 
 ## Security notes
 
-The bridge binds `127.0.0.1` and has **no auth**: any process on this machine
-can drive the browser through it. Same trust model as other local automation
-bridges, but keep it in mind. Don't run it on a shared box.
+On loopback the bridge has **no auth**: any process on this machine can drive
+the browser through it. Same trust model as other local automation bridges,
+but keep it in mind. Don't run it on a shared box. From the LAN every request
+needs the per-install token in its path (`/k/<token>/…`, 403 otherwise); the
+token travels inside the copied blob, so treat a paste like a key — anyone
+with it can drive your logged-in browser until you delete
+`.clawd-browser.token` and restart the bridge (a new one is generated). It is
+plain HTTP on your LAN; don't use it on networks you don't trust.

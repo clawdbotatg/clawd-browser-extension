@@ -29,6 +29,7 @@ const { chromium } = require("playwright-core");
 // still dials 8765 once at startup (storage isn't set yet); that transient
 // drop of the real extension self-heals in ~3s.
 const BRIDGE_PORT = +(process.env.CLAWD_BROWSER_PORT || 8766);
+const TOKEN = "e2e-test-token-not-secret";
 const PAGE_PORT = 8123;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -95,7 +96,7 @@ async function main() {
   console.log("starting bridge.py ...");
   const bridge = spawn("python3", [path.join(ROOT, "bridge.py")], {
     stdio: ["ignore", "inherit", "inherit"],
-    env: { ...process.env, CLAWD_BROWSER_PORT: String(BRIDGE_PORT) },
+    env: { ...process.env, CLAWD_BROWSER_PORT: String(BRIDGE_PORT), CLAWD_BROWSER_TOKEN: TOKEN },
   });
   cleanup.push(() => bridge.kill());
   for (let i = 0; ; i++) {
@@ -158,6 +159,35 @@ async function main() {
     skill.slice(0, 200),
   );
 
+  // -- LAN face: another machine dials the box's LAN address and must carry the
+  // token in the path; loopback stays token-free. We stand in for the other
+  // machine by dialing our own LAN IP (not loopback), which the bridge treats
+  // exactly like a remote peer.
+  console.log("\n== LAN / token ==");
+  const status = await (await fetch(`http://127.0.0.1:${BRIDGE_PORT}/status`)).json();
+  const lanHost = status.lan?.hosts?.[0];
+  check("GET /status (loopback) reports lan hosts + token url", !!lanHost && status.lan.urls[0] === `http://${lanHost}:${BRIDGE_PORT}/k/${TOKEN}`, JSON.stringify(status.lan));
+  if (lanHost) {
+    const LAN = `http://${lanHost}:${BRIDGE_PORT}`;
+    const noTok = await fetch(`${LAN}/status`);
+    check("LAN /status without token → 403", noTok.status === 403, String(noTok.status));
+    const badTok = await fetch(`${LAN}/k/wrong-token/status`);
+    check("LAN /status with wrong token → 403", badTok.status === 403, String(badTok.status));
+    const noTokCmd = await fetch(`${LAN}/cmd`, { method: "POST", body: JSON.stringify({ cmd: "tabs" }) });
+    check("LAN /cmd without token → 403", noTokCmd.status === 403, String(noTokCmd.status));
+    const okTok = await (await fetch(`${LAN}/k/${TOKEN}/status`)).json();
+    check("LAN /k/<token>/status → ok, extension visible", okTok.ok && okTok.extension_connected, JSON.stringify(okTok).slice(0, 200));
+    const lanSkill = await (await fetch(`${LAN}/k/${TOKEN}/skill`)).text();
+    check(
+      "LAN /k/<token>/skill rewrites every example URL to the token url",
+      lanSkill.includes(`${LAN}/k/${TOKEN}/cmd`) && !lanSkill.includes("127.0.0.1") && lanSkill.includes("another machine"),
+      lanSkill.slice(0, 200),
+    );
+    const lanTabs = await (await fetch(`${LAN}/k/${TOKEN}/cmd`, { method: "POST", body: JSON.stringify({ cmd: "tabs" }) })).json();
+    check("LAN /k/<token>/cmd tabs works", lanTabs.ok && Array.isArray(lanTabs.result.tabs), JSON.stringify(lanTabs).slice(0, 200));
+  }
+  check("loopback /skill mentions the LAN url", skill.includes("From another machine") && skill.includes(`/k/${TOKEN}`), skill.slice(-300));
+
   // -- drive it over the bridge HTTP API
   const open = await cmd("open", { url: PAGE_URL });
   check("open tab", open.ok && open.result.loaded, JSON.stringify(open));
@@ -197,7 +227,7 @@ async function main() {
   // -- v0.2.0 commands: js-targeted click + wait_for + version
   console.log("\n== v0.2.0 commands ==");
   const ver = await cmd("version");
-  check("version command", ver.ok && ver.result.version === "0.7.0", JSON.stringify(ver));
+  check("version command", ver.ok && ver.result.version === "0.8.0", JSON.stringify(ver));
 
   const jsClick = await cmd("click", { tab_id: tabId, js: "[...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'bump')" });
   check("click by js expression echoes element", jsClick.ok && jsClick.result.element?.tag === "button" && jsClick.result.element?.text === "bump", JSON.stringify(jsClick));
@@ -224,9 +254,13 @@ async function main() {
 
   // -- now the full MCP stdio path
   console.log("\n== mcp server (stdio) ==");
+  // Point it at the LAN token URL when we have one — the exact config a session
+  // on another machine uses (CLAWD_BROWSER_URL); else the loopback default.
+  const mcpUrl = lanHost ? `http://${lanHost}:${BRIDGE_PORT}/k/${TOKEN}` : `http://127.0.0.1:${BRIDGE_PORT}`;
+  console.log(`  (mcp_server.py → ${mcpUrl})`);
   const mcp = spawn("python3", [path.join(ROOT, "mcp_server.py")], {
     stdio: ["pipe", "pipe", "inherit"],
-    env: { ...process.env, CLAWD_BROWSER_PORT: String(BRIDGE_PORT) },
+    env: { ...process.env, CLAWD_BROWSER_PORT: String(BRIDGE_PORT), CLAWD_BROWSER_URL: mcpUrl },
   });
   cleanup.push(() => mcp.kill());
   const rl = readline.createInterface({ input: mcp.stdout });

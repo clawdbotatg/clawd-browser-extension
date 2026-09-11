@@ -25,10 +25,29 @@ async function skillText(port) {
   return port === DEFAULT_PORT ? text : text.replaceAll(String(DEFAULT_PORT), String(port));
 }
 
+// One /status fetch per popup open, shared by the health rows and the copy: the
+// bridge's "lan" (token URLs) is what makes the paste work from another machine.
+let statusPromise = null;
+function bridgeStatus() {
+  if (!statusPromise) {
+    statusPromise = (async () => {
+      const port = await getPort();
+      try {
+        const r = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) });
+        return await r.json();
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return statusPromise;
+}
+
 async function copyContext() {
-  const [tab, port] = await Promise.all([activeTab(), getPort()]);
+  const [tab, port, status] = await Promise.all([activeTab(), getPort(), bridgeStatus()]);
+  const lan = status && status.lan;
   // No readable active tab (rare) — fall back to the full skill so the paste still works.
-  const text = tab ? contextText(tab, port) : await skillText(port);
+  const text = tab ? contextText(tab, port, lan) : await skillText(port);
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -47,11 +66,11 @@ async function copyContext() {
 // there is one (a hash change is a same-document nav — no UI reboot, and on the
 // fleet the tab's passkey login carries the spawn); else opens a new tab.
 async function openSession() {
-  const [tab, port, cfg] = await Promise.all([activeTab(), getPort(), getSettings()]);
+  const [tab, port, cfg, status] = await Promise.all([activeTab(), getPort(), getSettings(), bridgeStatus()]);
   if (!tab) return;
   const url = composeUrl({
     harness: cfg.harness, project: cfg.project, machine: cfg.machine,
-    text: sessionText(tab, port, cfg.opener), send: true,
+    text: sessionText(tab, port, cfg.opener, status && status.lan), send: true,
   });
   const base = cfg.harness.replace(/\/+$/, "");
   const [existing] = await chrome.tabs.query({ url: base + "/*" });
@@ -76,15 +95,17 @@ function setStatus(id, ok, okText, badText) {
 }
 
 async function checkBridge() {
-  const port = await getPort();
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(2000) });
-    const s = await r.json();
+  const [port, s] = await Promise.all([getPort(), bridgeStatus()]);
+  const lanEl = document.getElementById("lan-line");
+  if (s) {
     setStatus("bridge", true, `bridge: up on :${port}`, "");
     setStatus("ext", !!s.extension_connected, "extension link: connected", "extension link: not connected");
-  } catch {
+    const hosts = (s.lan && s.lan.hosts) || [];
+    lanEl.textContent = hosts.length ? `LAN: ${hosts[0]}:${port} (token in the paste)` : "LAN: no network address";
+  } else {
     setStatus("bridge", false, "", `bridge: not running on :${port}`);
     setStatus("ext", false, "", "extension link: n/a");
+    lanEl.textContent = "LAN: n/a — paste works on this machine only";
   }
 }
 

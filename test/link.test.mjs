@@ -22,6 +22,20 @@ const c = contextText(tab, 8765);
 assert.ok(c.includes("tab_id: 42") && c.includes("https://example.com/a?b=1#c"));
 assert.ok(sessionText(tab, 8765).endsWith(DEFAULTS.opener));
 
+// bridge up → the blob carries the LAN token URL(s), the skill pointer uses it,
+// and the same-machine 127.0.0.1 pointer is gone (a remote reader must not try it)
+const lan = { hosts: ["192.168.1.9", "box.local"], urls: ["http://192.168.1.9:8765/k/tok123", "http://box.local:8765/k/tok123"], token: "tok123" };
+const l = contextText(tab, 8765, lan);
+assert.ok(l.includes("bridge: http://192.168.1.9:8765/k/tok123"), "primary LAN url");
+assert.ok(l.includes("(or http://box.local:8765/k/tok123)"), "fallback host");
+assert.ok(l.includes("curl -s http://192.168.1.9:8765/k/tok123/skill"), "skill via token url");
+assert.ok(!l.includes("127.0.0.1"), "no loopback pointer in the LAN form");
+assert.ok(l.includes("tab_id: 42"));
+assert.ok(sessionText(tab, 8765, DEFAULTS.opener, lan).startsWith(l) && sessionText(tab, 8765, DEFAULTS.opener, lan).endsWith(DEFAULTS.opener));
+// bridge down / no addresses → the old same-machine form
+assert.ok(contextText(tab, 8765, { urls: [] }).includes("http://127.0.0.1:8765/skill"));
+assert.ok(contextText(tab, 8765, null).includes("http://127.0.0.1:8765/skill"));
+
 // round trip: what the harness parses back equals what was sent
 const text = sessionText(tab, 8765);
 const q = new URLSearchParams(new URL(composeUrl({ text })).hash.split("?")[1]);

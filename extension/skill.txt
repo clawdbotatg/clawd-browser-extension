@@ -1,14 +1,25 @@
 # Skill: drive my real Chrome browser (clawd-browser)
 
-My machine runs the Clawd Browser extension. A local bridge at http://127.0.0.1:8765
+My machine runs the Clawd Browser extension. A bridge at http://127.0.0.1:8765
 lets you fully drive my real, logged-in Chrome: list/open tabs, read pages, take
 screenshots, click, type, run JS. These are my live sessions and accounts — ask
 before doing anything destructive or outward-facing (sending, posting, deleting,
 buying).
 
+## Where the bridge is
+The bridge runs on the browser's machine and answers on the LAN too, so the
+session driving it may be on another computer. If the base URL you were given
+looks like http://<host>:8765/k/<token> you are (probably) on another machine:
+the /k/… path is the access token, keep it on EVERY request, and use that base
+wherever this text says http://127.0.0.1:8765 (the copy served at <base>/skill is
+already rewritten for you). Never move the token to a URL that isn't this
+bridge's.
+
 ## If you already have the MCP tools
-If tools named mcp__clawd-browser__* are available in this session, just use them
-and ignore the HTTP section below.
+Tools named mcp__clawd-browser__* talk to whatever bridge THEY were configured
+for — on the browser's own machine that is this browser; on another machine it is
+some other browser (or none). Use them only if browser_tabs lists the tab/url you
+were given; otherwise ignore them and use the HTTP below.
 
 ## Otherwise: plain HTTP from your shell
 Every action is one POST. Replies are {"ok":true,"result":{...}} or
@@ -18,8 +29,12 @@ Every action is one POST. Replies are {"ok":true,"result":{...}} or
     -> {"ok":true,"extension_connected":true}
   curl -s http://127.0.0.1:8765/cmd -d '{"cmd":"tabs"}'
 
-If the connection is refused, start the bridge (repo path on this machine):
-  nohup python3 ~/clawd/clawd-harness/projects/clawd-browser-extension/bridge.py >/dev/null 2>&1 &
+If the connection is refused:
+  - on the browser's own machine, start the bridge (repo path there):
+      nohup python3 ~/clawd/clawd-harness/projects/clawd-browser-extension/bridge.py >/dev/null 2>&1 &
+  - from another machine there is nothing to start — the bridge lives next to
+    the browser. Tell me instead of retrying.
+If it replies 403, you dropped the /k/<token>/ prefix from the URL.
 If it says "extension not connected", Chrome with the extension isn't running —
 tell me instead of retrying.
 
@@ -84,5 +99,7 @@ Then Read /tmp/clawd-shot.png to look at it.
 - Clicks/typing are trusted CDP input events — they work on React apps and don't
   need the tab focused, so you can drive background tabs silently.
 - Prefer read/eval to extract data; screenshots for visual verification.
-- To get these as native MCP tools in future sessions:
+- To get these as native MCP tools in future sessions (on the browser's machine):
   claude mcp add clawd-browser --scope user -- python3 ~/clawd/clawd-harness/projects/clawd-browser-extension/mcp_server.py
+  From another machine that has this repo, point the same server at the LAN bridge:
+  claude mcp add clawd-browser --scope user -e CLAWD_BROWSER_URL=http://<host>:8765/k/<token> -- python3 /path/to/mcp_server.py
