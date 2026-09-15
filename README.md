@@ -77,6 +77,24 @@ URL, project, machine and opener live in the extension's settings page.
 Port defaults to `8765`; override with `CLAWD_BROWSER_PORT` (the extension side
 reads `port` from `chrome.storage.local`).
 
+## Changed bridge.py? Restart it
+
+The bridge is a plain background process. Nothing watches the file, nothing
+restarts it on a commit. Until you kill it, the OLD code keeps running and
+every "it doesn't work" looks like a bug in the new code. (v0.8.0 LAN shipped
+2026-09-11; the bridge kept running August code until 09-15.)
+
+```sh
+pgrep -fl clawd-browser-extension/bridge.py     # note the pid
+kill <pid>
+nohup python3 bridge.py >> bridge.log 2>&1 &
+curl -s http://127.0.0.1:8765/status            # verify on the running process
+```
+
+Extensions reconnect on their own within seconds. An extension change needs a
+reload in `chrome://extensions` in EVERY Chrome profile (bridge.log prints each
+one's version: `extension hello: x.y.z`).
+
 ## Tools
 
 | tool | what it does |
