@@ -93,7 +93,7 @@ tool call and ten seconds instead of ten frontier-model turns.
 
 ```
 browser_run(tab_id, goal, max_steps=30, allow_irreversible=false)   # MCP tool
-python3 -m jev --tab <tab_id> --goal "..."                           # same, from a shell
+python3 -m jev --url wikipedia --goal "..."   # or --tab <id>; same loop from a shell
 ```
 
 Keys go in `.env` next to `mcp_server.py` (see `.env.example`, gitignored):
