@@ -4,7 +4,7 @@
 // the tab, JS eval, console capture.
 
 const DEFAULT_PORT = 8765;
-const VERSION = "0.8.0";
+const VERSION = "0.9.0";
 const RECONNECT_MS = 3000;
 const CONSOLE_MAX = 500;
 
@@ -375,6 +375,17 @@ async function dispatch(cmd, a) {
 
     case "version": {
       return { version: VERSION };
+    }
+
+    case "cdp": {
+      // Raw Chrome DevTools Protocol passthrough on one tab: {method, params}.
+      // Exists for python clients that already speak CDP (jev/ — the Jev
+      // decision loop) so they don't need a second command vocabulary. The
+      // extension attaches first; the reply is the CDP result verbatim.
+      const tabId = await resolveTab(a);
+      if (!a.method) throw new Error("missing method");
+      await attach(tabId);
+      return await cdp(tabId, a.method, a.params || {});
     }
 
     case "reload_extension": {

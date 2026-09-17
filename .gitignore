@@ -5,3 +5,4 @@ test/tmp-profile/
 .claude/
 __pycache__/
 .clawd-browser.token
+.env

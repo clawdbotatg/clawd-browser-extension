@@ -10,3 +10,12 @@
   (`extension hello: x.y.z`).
 - Tests: `node --test test/` and `node test/e2e.mjs`.
 - Never commit `.clawd-browser.token` or `bridge.log` (gitignored).
+- `browser_run` (the Jev loop in `jev/`) is fast hands, not a brain: it only sees
+  on-screen controls, its DONE is a guess you must verify with `browser_read` or a
+  screenshot, a `blocked`/`budget` result means change the plan (never rerun the
+  same goal), and it must never be pointed at buy/pay/send/post/sign/delete actions
+  on Austin's real accounts (`IRREVERSIBLE` in `jev/agent.py` refuses those labels;
+  it is a heuristic). Full list in README "Caveats". Keys in `.env` (gitignored).
+  Offline tests: `python3 test/test_jev.py`.
+- The extension's `cdp` command is a raw CDP passthrough for `jev/`; changing it
+  needs an extension reload (`{"cmd":"reload_extension","target":"<id>"}` works).

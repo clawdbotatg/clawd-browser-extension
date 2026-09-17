@@ -21,10 +21,26 @@ import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def load_env():
+    """KEY=VALUE lines from .env next to this file (gitignored); never overrides the real env."""
+    try:
+        with open(os.path.join(HERE, ".env")) as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip().strip('"'))
+    except OSError:
+        pass
+
+
+load_env()
 PORT = int(os.environ.get("CLAWD_BROWSER_PORT", "8765"))
 BRIDGE_URL = (os.environ.get("CLAWD_BROWSER_URL") or f"http://127.0.0.1:{PORT}").rstrip("/")
 REMOTE = not BRIDGE_URL.startswith(("http://127.", "http://localhost"))
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 
 
 def log(msg):
@@ -194,6 +210,67 @@ TOOLS = [
 TOOL_CMDS = {t["name"]: t["cmd"] for t in TOOLS}
 
 
+# ---------------------------------------------------------------- browser_run: the Jev loop
+
+def run_jev(tab_id, goal, max_steps=30, allow_irreversible=False):
+    """Run the Jev decision loop on one real tab. Returns the report dict (never raises)."""
+    from jev import Agent, Browser, CAVEATS
+
+    def post(cmd, args):
+        r = call_browser(cmd, args, timeout=30)
+        if not r.get("ok"):
+            raise RuntimeError(r.get("error", "bridge error"))
+        return r.get("result")
+
+    try:
+        browser = Browser(tab_id, post)
+    except RuntimeError as e:
+        return {"status": "error", "reason": f"could not attach to tab {tab_id}: {e}"}
+    try:
+        report = Agent(browser, goal, max_steps=max_steps, allow_irreversible=allow_irreversible).run()
+    except (RuntimeError, ValueError) as e:
+        report = {"status": "error", "reason": str(e)}
+    finally:
+        browser.close()
+    report["caveats"] = CAVEATS
+    return report
+
+
+RUN_TOOL = {
+    "name": "browser_run",
+    "description": (
+        "Hand a small, well-scoped browser task to a fast cheap decision model (TypeSafe Jev, ported from "
+        "browser-use/jev-ultrafast) that runs INSIDE the given real tab: it snapshots the visible controls, picks one "
+        "click/type/select per step at ~150 ms and ~$0.0003, and stops on DONE, BLOCKED, or the step budget. You "
+        "stay the planner and the verifier. Good for: fill this form, get to the results page, open the article "
+        "about X, dismiss this dialog. Returns the action trail plus the final page text.\n"
+        "CAVEATS, each one bit us on 2026-09-17:\n"
+        "- It only sees what is on screen. Targets below the fold or inside an inner scroll list do not exist to "
+        "it and it will not scroll to find them. Scroll/open things for it first, or split the task.\n"
+        "- DONE is a guess, not proof; it declared DONE before results rendered. ALWAYS verify with browser_read "
+        "or browser_screenshot before telling the user it worked.\n"
+        "- On an impossible target it loops until the budget. 'blocked'/'budget' means change the plan; never "
+        "rerun the same goal.\n"
+        "- This is the user's real, logged-in browser. Never give it goals that buy, pay, send, post, publish, sign, "
+        "approve, transfer or delete. Code refuses to click labels that look like that (word-match heuristic, not "
+        "a guarantee; allow_irreversible=true overrides it and needs the user's explicit OK for that action).\n"
+        "- Text fields are filled by a small LLM from the goal; check typed values in the trail.\n"
+        "- No shadow DOM, iframes, canvas, uploads, pop-ups."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "tab_id": {"type": "integer", "description": "The tab to work in (from browser_tabs). Required: it must never guess a tab."},
+            "goal": {"type": "string", "description": "One concrete, visible-on-this-page goal, with a stop condition. E.g. 'Search for one-way flights Denver to Mumbai on Nov 1, 2026. Stop when flight options are visible.'"},
+            "max_steps": {"type": "integer", "description": "Action cap (default 30; model-call cap is double). Wall clock cap is 90 s."},
+            "allow_irreversible": {"type": "boolean", "description": "Let it click buy/send/post/sign/delete-looking controls. Only with the user's explicit OK for that specific action."},
+        },
+        "required": ["tab_id", "goal"],
+    },
+}
+TOOLS.append(RUN_TOOL)
+
+
 # ---------------------------------------------------------------- MCP plumbing
 
 def send(obj):
@@ -243,11 +320,17 @@ def handle(msg):
         reply(mid, {"tools": [{k: t[k] for k in ("name", "description", "inputSchema")} for t in TOOLS]})
     elif method == "tools/call":
         name = params.get("name")
+        args = params.get("arguments") or {}
+        if name == "browser_run":
+            report = run_jev(int(args["tab_id"]), args.get("goal", ""), int(args.get("max_steps") or 30),
+                             bool(args.get("allow_irreversible")))
+            reply(mid, {"content": [{"type": "text", "text": json.dumps(report, indent=2, ensure_ascii=False)}],
+                        "isError": report.get("status") == "error"})
+            return
         cmd = TOOL_CMDS.get(name)
         if not cmd:
             reply_error(mid, -32602, f"unknown tool: {name}")
             return
-        args = params.get("arguments") or {}
         reply(mid, tool_result(call_browser(cmd, args)))
     elif mid is not None:
         reply_error(mid, -32601, f"method not found: {method}")

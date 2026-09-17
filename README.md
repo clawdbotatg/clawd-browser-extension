@@ -77,6 +77,53 @@ URL, project, machine and opener live in the extension's settings page.
 Port defaults to `8765`; override with `CLAWD_BROWSER_PORT` (the extension side
 reads `port` from `chrome.storage.local`).
 
+## `browser_run` — fast hands, slow brain (v0.9.0)
+
+A ported copy of [browser-use/jev-ultrafast](https://github.com/browser-use/jev-ultrafast)
+(MIT) lives in `jev/` and runs INSIDE one of your real tabs through the extension's
+new raw `cdp` command. Each step it snapshots the visible controls into a numbered
+list, asks TypeSafe's Jev model to pick one operation + one element (~150 ms,
+~$0.0003), executes it with trusted input, and repeats until DONE, BLOCKED or the
+budget. A small LLM (Mercury via OpenRouter) writes text only for TYPE_TEXT steps.
+Model output never becomes a selector, coordinate or code: every action is an index
+into elements we observed, re-validated right before input.
+
+Why: Claude stays the planner and verifier; Jev is the hands. "Fill this form" is one
+tool call and ten seconds instead of ten frontier-model turns.
+
+```
+browser_run(tab_id, goal, max_steps=30, allow_irreversible=false)   # MCP tool
+python3 -m jev --tab <tab_id> --goal "..."                           # same, from a shell
+```
+
+Keys go in `.env` next to `mcp_server.py` (see `.env.example`, gitignored):
+`TYPESAFE_API_KEY` from https://console.typesafe.ai/keys and an OpenRouter key.
+
+### Caveats — read these, every one bit us on 2026-09-17
+
+- **It only sees what is on screen.** Anything below the fold or inside an inner
+  scroll list (a filter popup, a long dropdown) does not exist to it, and it will
+  not scroll to look. On Google Flights it clicked "Select all airlines" 48 times
+  because "United" was 1,000 px down the list. Scroll or open things for it first,
+  or split the task.
+- **DONE is a guess, not proof.** It declared DONE before the results had rendered.
+  Verify with `browser_read` / `browser_screenshot` before telling anyone it worked.
+- **On an impossible target it loops** until the budget (30 actions, 60 model
+  calls, 90 s). `blocked` or `budget` means change the plan, never rerun the same
+  goal.
+- **It runs on your real, logged-in accounts.** Never give it goals that buy, pay,
+  send, post, publish, sign, approve, transfer or delete. `jev/agent.py` refuses to
+  click labels that look like that (`IRREVERSIBLE`, a word-match heuristic, not a
+  guarantee); `allow_irreversible=true` overrides it and needs your explicit OK for
+  that specific action.
+- **Typed text comes from a small LLM** reading the goal. Check the values in the
+  returned trail; it can invent.
+- **Unsupported:** shadow DOM, iframes, canvas, file uploads, pop-up windows.
+  Material-style hidden checkboxes/radios are clicked through their `<label>`
+  (our patch; upstream can't see them at all).
+
+Tests: `python3 test/test_jev.py` (offline, no paid calls).
+
 ## Changed bridge.py? Restart it
 
 The bridge is a plain background process. Nothing watches the file, nothing

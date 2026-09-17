@@ -80,8 +80,22 @@ tab; get tab_ids from "tabs".
   key         {tab_id?, key}                      -> Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space
   console     {tab_id?, limit?, clear?}           -> captured console logs (capture starts on first use)
   detach      {tab_id?}                           -> remove Chrome's "is being debugged" banner from a tab
+  cdp         {tab_id?, method, params?}          -> raw Chrome DevTools Protocol call on that tab (for CDP-speaking clients)
   version     {}                                  -> running extension code version
   reload_extension {}                             -> extension reloads itself (picks up edited code from disk)
+
+## browser_run — hand a small task to fast cheap hands
+On the browser's machine, the MCP tool browser_run(tab_id, goal) (or from a shell:
+  python3 ~/clawd/clawd-harness/projects/clawd-browser-extension/jev_run.sh <tab_id> "goal")
+runs a decision loop INSIDE that tab: it lists the visible controls, a small
+choose-from-a-menu model (TypeSafe Jev) picks one click/type per step at ~150 ms,
+and it stops on DONE/BLOCKED/budget. You plan and verify; it clicks. Good for
+"fill this form", "get to the results page", "open the article about X".
+Caveats (each one bit us): it only sees ON-SCREEN controls and will not scroll to
+find things in inner lists; its DONE is a guess, ALWAYS verify with read/screenshot;
+blocked/budget means change the plan, never rerun the same goal; it is my real
+logged-in browser, so never give it goals that buy/pay/send/post/sign/delete (code
+refuses those labels, heuristically); typed text comes from a small LLM, check it.
 
 ## Screenshot recipe
   curl -s http://127.0.0.1:8765/cmd -d '{"cmd":"screenshot","args":{"tab_id":123}}' \
