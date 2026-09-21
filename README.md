@@ -130,17 +130,20 @@ Tests: `python3 test/test_jev.py` (offline, no paid calls).
 
 ## Changed bridge.py? Restart it
 
-The bridge is a plain background process. Nothing watches the file, nothing
-restarts it on a commit. Until you kill it, the OLD code keeps running and
-every "it doesn't work" looks like a bug in the new code. (v0.8.0 LAN shipped
-2026-09-11; the bridge kept running August code until 09-15.)
+Nothing watches the file, nothing restarts it on a commit. Until you kill it,
+the OLD code keeps running and every "it doesn't work" looks like a bug in the
+new code. (v0.8.0 LAN shipped 2026-09-11; the bridge kept running August code
+until 09-15.)
 
 ```sh
-pgrep -fl clawd-browser-extension/bridge.py     # note the pid
-kill <pid>
-nohup python3 bridge.py >> bridge.log 2>&1 &
+launchctl kickstart -k gui/$(id -u)/com.clawd.browser-bridge   # launchd: kill + restart with the new code
 curl -s http://127.0.0.1:8765/status            # verify on the running process
 ```
+
+Not installed as a launchd agent (`./install-launchd.sh`)? Then it's a plain
+background process: `pkill -f clawd-browser-extension/bridge.py` and
+`nohup python3 bridge.py >> bridge.log 2>&1 &`. Don't do that when launchd owns
+it — KeepAlive restarts its own copy and the nohup one dies on `EADDRINUSE`.
 
 Extensions reconnect on their own within seconds. An extension change needs a
 reload in `chrome://extensions` in EVERY Chrome profile (bridge.log prints each
