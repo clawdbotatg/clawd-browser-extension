@@ -33,8 +33,12 @@ Claude Code ──stdio/MCP──> mcp_server.py ──HTTP──> bridge.py <�
    ```sh
    claude mcp add clawd-browser -- python3 /path/to/clawd-browser-extension/mcp_server.py
    ```
-3. That's it. The bridge starts on demand; the extension reconnects every few
-   seconds until it finds it.
+3. Keep the bridge alive across reboots (macOS): `./install-launchd.sh`
+   installs it as a launchd user agent (`com.clawd.browser-bridge`,
+   RunAtLoad + KeepAlive, logs to `bridge.log`). Without this the bridge only
+   starts on demand from the MCP server, so after a reboot the extension
+   spams `ERR_CONNECTION_REFUSED` in its console until some session calls a
+   browser tool. The extension reconnects every few seconds either way.
 
 **Sharing the browser with any Claude session — one copy, one paste:** click
 the extension's toolbar icon and the popup copies a single paste-able blob (and
