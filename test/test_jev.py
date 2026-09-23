@@ -136,5 +136,142 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(report["steps"], 3)
 
 
+class DecideTests(unittest.TestCase):
+    """Bulk classification: batching, validation, no network without a key."""
+
+    def setUp(self):
+        from jev import decide as d
+        self.d = d
+
+    def fake_post(self, url, key, body, timeout=25):
+        self.bodies.append(body)
+        answers = {}
+        for qid, q in body["questions"].items():
+            if q["type"] == "noul":
+                answers[qid] = {"type": "noul", "noul": 0.9}
+            else:
+                opts = list(q["criteria"])
+                answers[qid] = {"type": "choice", "choice": opts[0], "confidence": 0.8,
+                                "probabilities": {o: (1.0 if o == opts[0] else 0.0) for o in opts}}
+        return {"model": "jev-test", "answers": answers, "usage": {"input_tokens": 100 * len(body["questions"])}}
+
+    def test_batches_of_50_and_order(self):
+        self.bodies = []
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "k"}), patch.object(self.d, "post_json", self.fake_post):
+            out = self.d.decide([{"t": i} for i in range(120)], "q?", {"a": "A", "b": "B"})
+        self.assertEqual(out["calls"], 3)
+        self.assertEqual([len(b["questions"]) for b in self.bodies], [50, 50, 20])
+        self.assertEqual([r["i"] for r in out["results"]], list(range(120)))
+        self.assertTrue(all(r["choice"] == "a" for r in out["results"]))
+        self.assertEqual(self.d.buckets(out), {"a": list(range(120))})
+        self.assertAlmostEqual(out["approx_cost_usd"], 12000 * 0.042 / 1e6, places=4)
+
+    def test_noul_and_context(self):
+        self.bodies = []
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "k"}), patch.object(self.d, "post_json", self.fake_post):
+            out = self.d.decide(["x", "y"], "spam?", kind="noul", context="policy")
+        self.assertEqual([r["p"] for r in out["results"]], [0.9, 0.9])
+        self.assertEqual(self.bodies[0]["state"]["context"], "policy")
+        self.assertEqual(self.bodies[0]["state"]["items"][1], {"i": 1, "text": "y"})
+        self.assertEqual(self.d.buckets(out), {"true": [0, 1]})
+
+    def test_invalid_answers_become_errors_not_actions(self):
+        def bad(url, key, body, timeout=25):
+            return {"answers": {"r0": {"choice": "zzz", "probabilities": {"a": 1.0, "b": 0.0}},
+                                "r1": {"choice": "a", "probabilities": {"a": 0.4, "b": 0.4}}}, "usage": {}}
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "k"}), patch.object(self.d, "post_json", bad):
+            out = self.d.decide(["p", "q"], "q?", {"a": "A", "b": "B"})
+        self.assertTrue(all("error" in r for r in out["results"]))
+        self.assertEqual(self.d.buckets(out), {"error": [0, 1]})
+
+    def test_no_key_no_network(self):
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": ""}):
+            with self.assertRaises(ValueError):
+                self.d.decide(["x"], "q?", {"a": "A", "b": "B"})
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "k"}):
+            with self.assertRaises(ValueError):
+                self.d.decide(["x"], "q?", {"only": "one"})
+
+
+class RipTests(unittest.TestCase):
+    """Batch runner: lanes, parallelism, verify, tab bookkeeping. Agent and Browser are faked."""
+
+    def setUp(self):
+        from jev import rip as r
+        self.r = r
+        self.calls = []
+
+    def post(self, cmd, args):
+        self.calls.append((cmd, args))
+        if cmd == "open":
+            return {"tab_id": 900 + len([c for c in self.calls if c[0] == "open"])}
+        return {}
+
+    def fake_agent(self, outcome="done", delay=0.0):
+        r = self.r
+        calls = self.calls
+
+        class B:
+            def __init__(self, tab_id, post):
+                self.tab_id = tab_id
+            def evaluate(self, expr):
+                return f"eval on {self.tab_id}"
+            def close(self):
+                calls.append(("close", self.tab_id))
+
+        class A:
+            def __init__(self, browser, goal, **kw):
+                self.browser, self.goal = browser, goal
+            def run(self):
+                import time as _t
+                _t.sleep(delay)
+                calls.append(("run", self.browser.tab_id, self.goal))
+                return {"status": outcome, "reason": "x", "steps": 1, "model_calls": 2, "approx_cost_usd": 0.0001,
+                        "trail": ["1. CLICK a"], "page": {"url": "u", "title": "t", "text": "hello"}}
+        return patch.object(r, "Agent", A), patch.object(r, "Browser", B)
+
+    def test_lanes_same_tab_sequential_urls_independent(self):
+        plans = [{"tab_id": 1, "goal": "a"}, {"url": "http://x", "goal": "b"}, {"tab_id": 1, "goal": "c"}, {"tab_id": 2, "goal": "d"}]
+        self.assertEqual([[p["goal"] for p in lane] for lane in self.r._lanes(plans)], [["a", "c"], ["b"], ["d"]])
+
+    def test_runs_all_verifies_and_closes_opened_tabs(self):
+        pa, pb = self.fake_agent()
+        with pa, pb:
+            out = self.r.rip(self.post, [
+                {"tab_id": 1, "goal": "a", "verify": "1+1"},
+                {"url": "http://x", "goal": "b"},
+                {"url": "http://y", "goal": "c", "keep": True},
+                {"tab_id": 1, "goal": "d"},
+            ], parallel=2)
+        res = out["results"]
+        self.assertEqual([r["goal"] for r in res], ["a", "b", "c", "d"])
+        self.assertEqual(res[0]["verified"], "eval on 1")
+        self.assertEqual({res[1]["tab_id"], res[2]["tab_id"]}, {901, 902})  # opened in parallel, either order
+        self.assertTrue(res[1]["closed_tab"])
+        self.assertNotIn("closed_tab", res[2])
+        self.assertEqual(out["totals"]["done"], 4)
+        runs = [c for c in self.calls if c[0] == "run" and c[1] == 1]
+        self.assertEqual([c[2] for c in runs], ["a", "d"])  # same tab, in order
+        closes = [c for c in self.calls if c[0] == "cdp" and c[1]["method"] == "Page.close"]
+        self.assertEqual([c[1]["tab_id"] for c in closes], [res[1]["tab_id"]])
+
+    def test_parallel_is_faster_than_serial(self):
+        import time as _t
+        pa, pb = self.fake_agent(delay=0.3)
+        with pa, pb:
+            t = _t.perf_counter()
+            out = self.r.rip(self.post, [{"tab_id": i, "goal": "g"} for i in range(3)], parallel=3)
+        self.assertLess(_t.perf_counter() - t, 0.7)
+        self.assertEqual(out["totals"]["plans"], 3)
+
+    def test_bad_plan_does_not_sink_batch(self):
+        pa, pb = self.fake_agent()
+        with pa, pb:
+            out = self.r.rip(self.post, [{"goal": "no tab"}, {"tab_id": 5, "goal": ""}, {"tab_id": 6, "goal": "ok"}])
+        self.assertEqual([r["status"] for r in out["results"]], ["error", "error", "done"])
+        with self.assertRaises(ValueError):
+            self.r.rip(self.post, [])
+
+
 if __name__ == "__main__":
     unittest.main()

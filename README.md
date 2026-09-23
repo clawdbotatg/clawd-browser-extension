@@ -126,7 +126,40 @@ Keys go in `.env` next to `mcp_server.py` (see `.env.example`, gitignored):
   Material-style hidden checkboxes/radios are clicked through their `<label>`
   (our patch; upstream can't see them at all).
 
-Tests: `python3 test/test_jev.py` (offline, no paid calls).
+Tests: `python3 test/test_jev.py` (offline, no paid calls; covers run, rip and decide).
+
+## `browser_rip` + `browser_decide` — let Jev rip (v0.10.0)
+
+Two more tools in `jev/`, same key, same caveats. They exist because "triage my
+inbox" and "do this on these eight pages" were taking one frontier-model turn per
+row. Now they take one cheap call per fifty rows.
+
+**`browser_decide(items, question, criteria, kind, context)`** — bulk classify.
+Hand it a list (inbox rows, search results, links, messages; from `browser_eval`,
+an API, or a file) and ONE question with named options. One request per 50 items,
+~1.5 s and ~$0.0004 each; every item comes back with its option and probability.
+No browser involved. `kind: noul` gives P(true) instead. Treat p below ~0.7 as
+"ask", not "act".
+
+**`browser_rip(plans, parallel)`** — a batch of `browser_run` goals. Plans on
+different tabs run at the same time (cap 4); plans on the same tab run in order.
+`{url, goal}` opens its own tab and closes it after (`keep: true` to leave it).
+`verify` is a JS expression evaluated after the run; its value comes back as
+`verified` so you check the outcome with code, not with the model's DONE.
+
+```
+python3 -m jev.decide rows.json --question "How should this row be triaged?" \
+    --criteria keep="real mail" seen="noise, mark read" spam="unsolicited" --context "Austin is..."
+python3 -m jev.rip plan.json --parallel 3      # plan: [{tab_id|url, goal, verify?, keep?}, ...]
+```
+
+The pattern that makes a chore fast: **extract → decide → act in bulk.** Pull the
+rows with one `browser_eval` (or the API), one `browser_decide`, then one
+`browser_eval` / API call that acts on all the indices in a bucket. Three calls
+for fifty rows. `browser_rip` is for the chores that need real clicking.
+
+Live 2026-09-23: 50 inbox rows classified in 1.46 s for $0.0004 (10,116 tokens);
+two tabs worked in parallel at 2.1 s wall for two 1.5 s steps.
 
 ## Changed bridge.py? Restart it
 

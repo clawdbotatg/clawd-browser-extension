@@ -19,3 +19,7 @@
   Offline tests: `python3 test/test_jev.py`.
 - The extension's `cdp` command is a raw CDP passthrough for `jev/`; changing it
   needs an extension reload (`{"cmd":"reload_extension","target":"<id>"}` works).
+- `browser_rip` / `browser_decide` (v0.10.0, `jev/rip.py`, `jev/decide.py`) are the
+  bulk versions: many goals across tabs, or one question over many items in one
+  call. The fast pattern for chores is extract → decide → act in bulk; reach for
+  `rip` only when each item needs real clicking. `verified` (your JS) beats DONE.

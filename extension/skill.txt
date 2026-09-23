@@ -97,6 +97,17 @@ blocked/budget means change the plan, never rerun the same goal; it is my real
 logged-in browser, so never give it goals that buy/pay/send/post/sign/delete (code
 refuses those labels, heuristically); typed text comes from a small LLM, check it.
 
+## browser_rip / browser_decide — let Jev rip (bulk)
+browser_decide(items, question, criteria, kind?, context?): classify a whole list in
+one cheap call (50 items per ~1.5 s request, ~$0.0004). Items from eval/API/file; each
+comes back with its option + probability. noul kind = P(true). p < ~0.7 means ask.
+browser_rip(plans, parallel?): a batch of browser_run goals; different tabs in
+parallel (cap 4), same tab in order; {url, goal} opens+closes its own tab; `verify`
+= JS evaluated after, returned as `verified`. Shell: python3 -m jev.rip plan.json,
+python3 -m jev.decide rows.json --question ... --criteria a=... b=...
+Fast chore pattern: ONE eval to extract rows -> ONE decide -> ONE eval/API call that
+acts on every index in a bucket. Never one model turn per row again.
+
 ## Screenshot recipe
   curl -s http://127.0.0.1:8765/cmd -d '{"cmd":"screenshot","args":{"tab_id":123}}' \
    | python3 -c 'import sys,json,base64; open("/tmp/clawd-shot.png","wb").write(base64.b64decode(json.load(sys.stdin)["result"]["data"]))'

@@ -40,7 +40,7 @@ load_env()
 PORT = int(os.environ.get("CLAWD_BROWSER_PORT", "8765"))
 BRIDGE_URL = (os.environ.get("CLAWD_BROWSER_URL") or f"http://127.0.0.1:{PORT}").rstrip("/")
 REMOTE = not BRIDGE_URL.startswith(("http://127.", "http://localhost"))
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 
 
 def log(msg):
@@ -212,16 +212,19 @@ TOOL_CMDS = {t["name"]: t["cmd"] for t in TOOLS}
 
 # ---------------------------------------------------------------- browser_run: the Jev loop
 
+def bridge_call_for_jev(cmd, args):
+    """The bridge as jev/ sees it: result dict or RuntimeError. Shared by browser_run and browser_rip."""
+    r = call_browser(cmd, args, timeout=30)
+    if not r.get("ok"):
+        raise RuntimeError(r.get("error", "bridge error"))
+    return r.get("result")
+
+
 def run_jev(tab_id, goal, max_steps=30, allow_irreversible=False):
     """Run the Jev decision loop on one real tab. Returns the report dict (never raises)."""
     from jev import Agent, Browser, CAVEATS
 
-    def post(cmd, args):
-        r = call_browser(cmd, args, timeout=30)
-        if not r.get("ok"):
-            raise RuntimeError(r.get("error", "bridge error"))
-        return r.get("result")
-
+    post = bridge_call_for_jev
     try:
         browser = Browser(tab_id, post)
     except RuntimeError as e:
@@ -269,6 +272,54 @@ RUN_TOOL = {
     },
 }
 TOOLS.append(RUN_TOOL)
+
+RIP_TOOL = {
+    "name": "browser_rip",
+    "description": (
+        "Run a BATCH of browser_run goals at once: goals on different tabs run in parallel (up to 4), goals on the "
+        "same tab run in order. Each plan is {tab_id | url, goal, verify?, keep?, max_steps?, allow_irreversible?}. "
+        "A plan with `url` opens its own tab and closes it after (keep=true to leave it open). `verify` is a JS "
+        "expression evaluated on the tab after the run; its value comes back as `verified`, so you check the outcome "
+        "with code instead of trusting DONE. Use it for 'do this same thing on these 8 pages' or 'these 5 independent "
+        "chores'; ~10 s and under a cent per goal. Same caveats as browser_run (on-screen targets only, DONE is a "
+        "guess, blocked/budget means change the plan, never buy/pay/send/post/sign/delete on the user's accounts)."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "plans": {"type": "array", "description": "List of {tab_id?: int, url?: str, goal: str, verify?: str (JS expression), keep?: bool, max_steps?: int, allow_irreversible?: bool}. One of tab_id/url is required per plan.",
+                      "items": {"type": "object"}},
+            "parallel": {"type": "integer", "description": "Max tabs worked at the same time (default 3, cap 4)."},
+        },
+        "required": ["plans"],
+    },
+}
+TOOLS.append(RIP_TOOL)
+
+DECIDE_TOOL = {
+    "name": "browser_decide",
+    "description": (
+        "Bulk classify a LIST of things in one cheap call: hand Jev up to hundreds of items (inbox rows, search "
+        "results, tabs, links, messages) plus ONE question with named options, get back the chosen option and its "
+        "probability for every item. 50 items per request at ~1.5 s and ~$0.0004; more items = more requests. No "
+        "browser needed: items can come from browser_eval, an API, or a file. This replaces one model turn per row "
+        "with one call per 50 rows. Use choice (named buckets, e.g. keep/seen/spam) or noul (yes/no, P(true)). Give "
+        "`context` (who is asking, the policy) so the model has the rules. Answers are probabilities over YOUR "
+        "options, never free text; treat p < ~0.7 as 'ask' rather than 'act'."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "items": {"type": "array", "description": "The things to classify: objects (any keys, e.g. {from, subject, snippet}) or strings. Order is preserved; results carry the index i.", "items": {}},
+            "question": {"type": "string", "description": "One question asked about EACH item, e.g. 'How should this inbox row be triaged?'"},
+            "criteria": {"type": "object", "description": "choice: {option: what it means, ...} (2+ options). noul: optional {true: ..., false: ...}.", "additionalProperties": {"type": "string"}},
+            "kind": {"type": "string", "enum": ["choice", "noul"], "description": "choice (default) or noul."},
+            "context": {"type": "string", "description": "The policy / who is asking, one paragraph. Goes into the state, not the question."},
+        },
+        "required": ["items", "question"],
+    },
+}
+TOOLS.append(DECIDE_TOOL)
 
 
 # ---------------------------------------------------------------- MCP plumbing
@@ -326,6 +377,26 @@ def handle(msg):
                              bool(args.get("allow_irreversible")))
             reply(mid, {"content": [{"type": "text", "text": json.dumps(report, indent=2, ensure_ascii=False)}],
                         "isError": report.get("status") == "error"})
+            return
+        if name == "browser_rip":
+            from jev.rip import rip
+            try:
+                report = rip(bridge_call_for_jev, args.get("plans") or [], int(args.get("parallel") or 3))
+                err = False
+            except (ValueError, RuntimeError) as e:
+                report, err = {"status": "error", "reason": str(e)}, True
+            reply(mid, {"content": [{"type": "text", "text": json.dumps(report, indent=2, ensure_ascii=False)}], "isError": err})
+            return
+        if name == "browser_decide":
+            from jev.decide import buckets, decide
+            try:
+                report = decide(args.get("items") or [], args.get("question", ""), args.get("criteria"),
+                                kind=args.get("kind") or "choice", context=args.get("context"))
+                report["buckets"] = buckets(report)
+                err = False
+            except (ValueError, RuntimeError) as e:
+                report, err = {"status": "error", "reason": str(e)}, True
+            reply(mid, {"content": [{"type": "text", "text": json.dumps(report, indent=2, ensure_ascii=False)}], "isError": err})
             return
         cmd = TOOL_CMDS.get(name)
         if not cmd:
