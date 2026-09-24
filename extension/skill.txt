@@ -61,7 +61,7 @@ POST /cmd with {"cmd":<name>,"args":{...}}. Omitting tab_id targets the active
 tab; get tab_ids from "tabs".
 
   tabs        {}                                  -> every tab: tab_id, url, title, active, window_id, status
-  open        {url}                               -> new tab, waits for load
+  open        {url, active?}                      -> new tab, waits for load (active:false = background, no focus steal)
   navigate    {tab_id?, url}                      -> point a tab somewhere, waits for load
   close_tab   {tab_id?}
   read        {tab_id?, max_chars?}               -> page innerText + title/url (default 20k chars)

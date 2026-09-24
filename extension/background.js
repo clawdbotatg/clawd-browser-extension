@@ -4,7 +4,7 @@
 // the tab, JS eval, console capture.
 
 const DEFAULT_PORT = 8765;
-const VERSION = "0.9.0";
+const VERSION = chrome.runtime.getManifest().version; // one source of truth: manifest.json
 const RECONNECT_MS = 3000;
 const CONSOLE_MAX = 500;
 
@@ -272,7 +272,9 @@ async function dispatch(cmd, a) {
     }
 
     case "open": {
-      const tab = await chrome.tabs.create({ url: a.url || "about:blank" });
+      // active:false opens it in the background: the user's focus stays put
+      // (clawd-scribe reads its own calendar tab this way). Default: foreground.
+      const tab = await chrome.tabs.create({ url: a.url || "about:blank", active: a.active !== false });
       const loaded = await waitForLoad(tab.id);
       return { ...tabInfo(await chrome.tabs.get(tab.id)), loaded };
     }

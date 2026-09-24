@@ -193,6 +193,14 @@ async function main() {
   check("open tab", open.ok && open.result.loaded, JSON.stringify(open));
   const tabId = open.ok ? open.result.tab_id : null;
 
+  // active:false opens in the background: the active tab must not change
+  const bg = await cmd("open", { url: PAGE_URL + "?bg", active: false });
+  const afterBg = await cmd("tabs");
+  const bgTab = bg.ok && afterBg.ok ? afterBg.result.tabs.find((t) => t.tab_id === bg.result.tab_id) : null;
+  const fgTab = afterBg.ok ? afterBg.result.tabs.find((t) => t.tab_id === tabId) : null;
+  check("open active:false stays in the background", bg.ok && bg.result.loaded && bgTab && !bgTab.active && fgTab && fgTab.active, JSON.stringify({ bg, bgTab, fgTab }).slice(0, 300));
+  if (bg.ok) await cmd("close_tab", { tab_id: bg.result.tab_id });
+
   const tabs = await cmd("tabs");
   check("tabs lists our tab", tabs.ok && tabs.result.tabs.some((t) => t.tab_id === tabId), JSON.stringify(tabs).slice(0, 300));
 
@@ -227,7 +235,7 @@ async function main() {
   // -- v0.2.0 commands: js-targeted click + wait_for + version
   console.log("\n== v0.2.0 commands ==");
   const ver = await cmd("version");
-  check("version command", ver.ok && ver.result.version === "0.8.0", JSON.stringify(ver));
+  check("version command", ver.ok && ver.result.version === JSON.parse(fs.readFileSync(path.join(ROOT, "extension/manifest.json"), "utf8")).version, JSON.stringify(ver));
 
   const jsClick = await cmd("click", { tab_id: tabId, js: "[...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'bump')" });
   check("click by js expression echoes element", jsClick.ok && jsClick.result.element?.tag === "button" && jsClick.result.element?.text === "bump", JSON.stringify(jsClick));
@@ -290,7 +298,7 @@ async function main() {
   mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
 
   const list = await rpc("tools/list");
-  check("tools/list has 12 tools", list.result?.tools?.length === 12, JSON.stringify(list.result?.tools?.map((t) => t.name)));
+  check("tools/list has 13 tools", list.result?.tools?.length === 13, JSON.stringify(list.result?.tools?.map((t) => t.name)));
   check("tools/list includes browser_wait_for", list.result?.tools?.some((t) => t.name === "browser_wait_for"), "");
 
   const call = await rpc("tools/call", { name: "browser_read", arguments: { tab_id: tabId } });
