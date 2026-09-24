@@ -298,7 +298,7 @@ async function main() {
   mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
 
   const list = await rpc("tools/list");
-  check("tools/list has 13 tools", list.result?.tools?.length === 13, JSON.stringify(list.result?.tools?.map((t) => t.name)));
+  check("tools/list has 15 tools", list.result?.tools?.length === 15, JSON.stringify(list.result?.tools?.map((t) => t.name)));
   check("tools/list includes browser_wait_for", list.result?.tools?.some((t) => t.name === "browser_wait_for"), "");
 
   const call = await rpc("tools/call", { name: "browser_read", arguments: { tab_id: tabId } });
