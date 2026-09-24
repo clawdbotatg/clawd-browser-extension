@@ -67,6 +67,7 @@ tab; get tab_ids from "tabs".
   read        {tab_id?, max_chars?}               -> page innerText + title/url (default 20k chars)
   screenshot  {tab_id?}                           -> {"result":{"data":<base64 png>}} — works on unfocused tabs
   eval        {tab_id?, code}                     -> run JS in the page, returns the value
+  select      {tab_id?, selector, attrs?, max?}   -> read-only DOM query, NO debugger banner: [{attrs, text, lineThrough}]
   click       {tab_id?, js} or {tab_id?, selector} or {tab_id?, x, y}
               -> real trusted click (scrolls target into view). js = expression
                  returning the Element to click — found, measured, and clicked

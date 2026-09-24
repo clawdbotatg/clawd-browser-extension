@@ -201,6 +201,9 @@ async function main() {
   check("open active:false stays in the background", bg.ok && bg.result.loaded && bgTab && !bgTab.active && fgTab && fgTab.active, JSON.stringify({ bg, bgTab, fgTab }).slice(0, 300));
   if (bg.ok) await cmd("close_tab", { tab_id: bg.result.tab_id });
 
+  const sel = await cmd("select", { tab_id: tabId, selector: "#btn", attrs: ["id"] });
+  check("select reads the DOM without the debugger", sel.ok && sel.result.items.length === 1 && sel.result.items[0].attrs.id === "btn" && typeof sel.result.items[0].lineThrough === "boolean", JSON.stringify(sel).slice(0, 300));
+
   const tabs = await cmd("tabs");
   check("tabs lists our tab", tabs.ok && tabs.result.tabs.some((t) => t.tab_id === tabId), JSON.stringify(tabs).slice(0, 300));
 

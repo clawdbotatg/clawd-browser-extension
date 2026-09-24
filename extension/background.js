@@ -323,6 +323,35 @@ async function dispatch(cmd, a) {
       return r.value;
     }
 
+    // Read-only DOM query WITHOUT the debugger: chrome.scripting runs in the
+    // extension's isolated world, so Chrome shows no "started debugging this
+    // browser" banner (which eval/click/type trigger across every window).
+    // Returns each match's innerText, requested attributes, and whether it or
+    // any descendant is struck through. clawd-scribe reads calendar tiles so.
+    case "select": {
+      const tabId = await resolveTab(a);
+      if (!a.selector) throw new Error("missing selector");
+      const [inj] = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "ISOLATED",
+        args: [a.selector, a.attrs || [], Math.min(a.max || 500, 2000)],
+        func: (selector, attrs, max) => {
+          const items = [];
+          for (const el of document.querySelectorAll(selector)) {
+            if (items.length >= max) break;
+            const at = {};
+            for (const k of attrs) at[k] = el.getAttribute(k);
+            const lineThrough = [el, ...el.querySelectorAll("*")].some(
+              (n) => getComputedStyle(n).textDecorationLine.includes("line-through")
+            );
+            items.push({ attrs: at, text: el.innerText || "", lineThrough });
+          }
+          return { title: document.title, url: location.href, items };
+        },
+      });
+      return inj ? inj.result : null;
+    }
+
     case "eval": {
       const tabId = await resolveTab(a);
       if (!a.code) throw new Error("missing code");
