@@ -274,7 +274,10 @@ async function dispatch(cmd, a) {
     case "open": {
       // active:false opens it in the background: the user's focus stays put
       // (clawd-scribe reads its own calendar tab this way). Default: foreground.
-      const tab = await chrome.tabs.create({ url: a.url || "about:blank", active: a.active !== false });
+      // Every window closed (the browser still runs): a tab needs a window, so open one with it.
+      const wins = await chrome.windows.getAll({ windowTypes: ["normal"] });
+      const tab = wins.length ? await chrome.tabs.create({ url: a.url || "about:blank", active: a.active !== false })
+        : (await chrome.windows.create({ url: a.url || "about:blank", focused: a.active !== false })).tabs[0];
       const loaded = await waitForLoad(tab.id);
       return { ...tabInfo(await chrome.tabs.get(tab.id)), loaded };
     }
